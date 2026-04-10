@@ -1,0 +1,2 @@
+# boatclaw
+Task Automation CLI
