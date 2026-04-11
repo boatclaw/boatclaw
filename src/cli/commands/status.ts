@@ -1,0 +1,458 @@
+/**
+ * Status and worker control commands.
+ *
+ * Commands:
+ * - status: Show current configuration status
+ * - start: Start the worker
+ * - stop: Stop the worker
+ */
+
+import { Command } from 'commander';
+import chalk from 'chalk';
+import { configManager } from '../../core/config.js';
+import { isInitialized, BOATCLAW_DIR } from '../../core/paths.js';
+import { createBoardProvider, verifyPlatformConfig, verifyWorkflowConfig } from '../../platforms/factory.js';
+import { Worker, createWorker, TaskResult } from '../../core/worker.js';
+import { Card } from '../../platforms/types.js';
+import { RoleConfig } from '../../core/config.js';
+import { createTaskProcessorFunction, checkAIAvailability } from '../../ai/index.js';
+import * as ui from '../ui.js';
+
+export function registerStatusCommands(program: Command): void {
+  // Status command
+  program
+    .command('status')
+    .description('Show current configuration and worker status')
+    .action(async () => {
+      ui.showLogo();
+
+      if (!isInitialized()) {
+        ui.error('Boatclaw is not configured.');
+        console.log();
+        ui.info(`Run ${chalk.cyan('boatclaw setup')} to get started.`);
+        return;
+      }
+
+      const config = configManager.load();
+      const projects = Object.values(config.projects);
+      const agents = Object.values(config.roles);
+
+      // ─────────────────────────────────────────
+      // CONFIGURATION OVERVIEW
+      // ─────────────────────────────────────────
+      ui.header('Configuration');
+
+      // Platform Section
+      console.log('  ' + chalk.cyan('┌─') + chalk.bold(' Platform'));
+      console.log('  ' + chalk.cyan('│'));
+      if (config.platform === 'trello') {
+        console.log('  ' + chalk.cyan('│') + '  Type       ' + chalk.white('Trello'));
+        console.log('  ' + chalk.cyan('│') + '  Board      ' + chalk.white(config.trello.boardName || config.trello.boardId || 'Not set'));
+      } else if (config.platform === 'jira') {
+        console.log('  ' + chalk.cyan('│') + '  Type       ' + chalk.white('Jira'));
+        console.log('  ' + chalk.cyan('│') + '  Project    ' + chalk.white(config.jira.projectKey || 'Not set'));
+        console.log('  ' + chalk.cyan('│') + '  Instance   ' + chalk.dim(config.jira.instanceUrl || 'Not set'));
+      } else if (config.platform === 'linear') {
+        console.log('  ' + chalk.cyan('│') + '  Type       ' + chalk.white('Linear'));
+        console.log('  ' + chalk.cyan('│') + '  Team       ' + chalk.white(config.linear.teamName || config.linear.teamId || 'Not set'));
+      } else {
+        console.log('  ' + chalk.cyan('│') + '  Type       ' + chalk.dim('Not configured'));
+      }
+      console.log('  ' + chalk.cyan('│'));
+
+      // Workflow Section
+      console.log('  ' + chalk.cyan('├─') + chalk.bold(' Workflow'));
+      console.log('  ' + chalk.cyan('│'));
+      const workflowSteps = [
+        { label: 'Trigger', value: config.workflow.triggerName || config.workflow.triggerId, icon: '◯' },
+        { label: 'Working', value: config.workflow.workingName || config.workflow.workingId, icon: '→' },
+        { label: 'Review', value: config.workflow.reviewName || config.workflow.reviewId, icon: '◎', optional: true },
+        { label: 'Success', value: config.workflow.successName || config.workflow.successId, icon: '✓' },
+        { label: 'Failed', value: config.workflow.failedName || config.workflow.failedId, icon: '✗', optional: true },
+      ];
+      for (const step of workflowSteps) {
+        if (step.optional && !step.value) continue;
+        const iconColor = step.icon === '✓' ? chalk.green : step.icon === '✗' ? chalk.red : chalk.cyan;
+        console.log('  ' + chalk.cyan('│') + '  ' + iconColor(step.icon) + ' ' + step.label.padEnd(10) + chalk.white(step.value || 'Not set'));
+      }
+      console.log('  ' + chalk.cyan('│'));
+
+      // AI Provider Section
+      console.log('  ' + chalk.cyan('├─') + chalk.bold(' AI Provider'));
+      console.log('  ' + chalk.cyan('│'));
+      console.log('  ' + chalk.cyan('│') + '  Provider   ' + chalk.white(config.ai.provider === 'claude' ? 'Claude CLI' : 'Cursor CLI'));
+      console.log('  ' + chalk.cyan('│') + '  Model      ' + chalk.white(config.ai.defaultModel));
+      console.log('  ' + chalk.cyan('│') + '  Timeout    ' + chalk.dim(`${config.ai.timeoutSeconds}s`));
+      console.log('  ' + chalk.cyan('│'));
+
+      // Worker Settings Section
+      console.log('  ' + chalk.cyan('├─') + chalk.bold(' Worker'));
+      console.log('  ' + chalk.cyan('│'));
+      console.log('  ' + chalk.cyan('│') + '  Poll       ' + chalk.white(`${config.worker.pollInterval}s`));
+      console.log('  ' + chalk.cyan('│') + '  Parallel   ' + chalk.white(`${config.worker.maxParallelTasks || 10} tasks max`));
+      console.log('  ' + chalk.cyan('│'));
+
+      // GitHub Section
+      console.log('  ' + chalk.cyan('└─') + chalk.bold(' GitHub'));
+      console.log('    ');
+      if (config.github.enabled && config.github.token) {
+        console.log('    ' + '  Status     ' + chalk.green('● Connected'));
+        if (config.github.defaultRepo) {
+          console.log('    ' + '  Repo       ' + chalk.white(config.github.defaultRepo));
+        }
+        console.log('    ' + '  PRs        ' + (config.github.createPrs ? chalk.green('Auto-create') : chalk.dim('Manual')));
+      } else {
+        console.log('    ' + '  Status     ' + chalk.dim('○ Not configured'));
+        console.log('    ' + chalk.dim('  Run: boatclaw github setup'));
+      }
+
+      // ─────────────────────────────────────────
+      // PROJECTS
+      // ─────────────────────────────────────────
+      console.log();
+      ui.header('Projects');
+
+      if (projects.length === 0) {
+        console.log('  ' + chalk.dim('No projects configured'));
+        console.log('  ' + chalk.dim(`Run ${chalk.cyan('boatclaw projects add')} to add one`));
+      } else {
+        for (let i = 0; i < projects.length; i++) {
+          const project = projects[i];
+          const isLast = i === projects.length - 1;
+          const prefix = isLast ? '└─' : '├─';
+          const linePrefix = isLast ? '  ' : '│ ';
+
+          console.log('  ' + chalk.cyan(prefix) + ' ' + chalk.bold(project.name));
+          console.log('  ' + chalk.cyan(linePrefix) + '   Path     ' + chalk.dim(truncatePath(project.path, 35)));
+          if (project.github) {
+            console.log('  ' + chalk.cyan(linePrefix) + '   GitHub   ' + chalk.white(project.github));
+          }
+          console.log('  ' + chalk.cyan(linePrefix) + '   Branch   ' + chalk.dim(project.baseBranch || 'main'));
+          console.log('  ' + chalk.cyan(linePrefix) + '   Context  ' + (project.context ? chalk.green('✓ Set') : chalk.dim('○ Empty')));
+          if (!isLast) console.log('  ' + chalk.cyan('│'));
+        }
+      }
+
+      // ─────────────────────────────────────────
+      // AGENTS
+      // ─────────────────────────────────────────
+      console.log();
+      ui.header('Agents');
+
+      if (agents.length === 0) {
+        console.log('  ' + chalk.dim('No agents configured'));
+        console.log('  ' + chalk.dim(`Run ${chalk.cyan('boatclaw agents add')} to add one`));
+      } else {
+        for (let i = 0; i < agents.length; i++) {
+          const agent = agents[i];
+          const isLast = i === agents.length - 1;
+          const prefix = isLast ? '└─' : '├─';
+          const linePrefix = isLast ? '  ' : '│ ';
+
+          const statusIcon = agent.enabled ? chalk.green('●') : chalk.dim('○');
+          const statusText = agent.enabled ? chalk.green('Active') : chalk.dim('Disabled');
+
+          console.log('  ' + chalk.cyan(prefix) + ' ' + statusIcon + ' ' + chalk.bold(agent.name) + '  ' + statusText);
+
+          const labels = agent.labels?.join(', ') || agent.label || 'none';
+          console.log('  ' + chalk.cyan(linePrefix) + '   Labels   ' + chalk.white(labels));
+
+          const projectList = agent.projects?.includes('*') ? 'All projects' : agent.projects?.join(', ') || 'none';
+          console.log('  ' + chalk.cyan(linePrefix) + '   Scope    ' + chalk.dim(projectList));
+
+          const provider = agent.provider || config.ai.provider;
+          console.log('  ' + chalk.cyan(linePrefix) + '   Model    ' + chalk.dim(`${agent.model} (${provider})`));
+          console.log('  ' + chalk.cyan(linePrefix) + '   Context  ' + (agent.context ? chalk.green('✓ Set') : chalk.dim('○ Empty')));
+
+          if (!isLast) console.log('  ' + chalk.cyan('│'));
+        }
+      }
+
+      // ─────────────────────────────────────────
+      // FOOTER
+      // ─────────────────────────────────────────
+      console.log();
+      ui.divider();
+      console.log();
+      console.log('  ' + chalk.dim('Config location: ' + BOATCLAW_DIR));
+      console.log('  ' + chalk.dim('Start worker:    ' + chalk.cyan('boatclaw start')));
+      console.log();
+    });
+
+  // Start command
+  program
+    .command('start')
+    .description('Start the Boatclaw worker')
+    .option('--dry-run', 'Run without making changes')
+    .action(async (options: { dryRun?: boolean }) => {
+      if (!isInitialized()) {
+        ui.error('Boatclaw is not configured.');
+        ui.info(`Run ${chalk.cyan('boatclaw setup')} first.`);
+        process.exit(1);
+      }
+
+      // Verify configuration
+      const platformCheck = verifyPlatformConfig();
+      if (!platformCheck.valid) {
+        ui.error('Platform configuration incomplete:');
+        for (const err of platformCheck.errors) {
+          ui.listItem(err);
+        }
+        process.exit(1);
+      }
+
+      const workflowCheck = verifyWorkflowConfig();
+      if (!workflowCheck.valid) {
+        ui.error('Workflow configuration incomplete:');
+        for (const err of workflowCheck.errors) {
+          ui.listItem(err);
+        }
+        process.exit(1);
+      }
+
+      const config = configManager.load();
+      const agents = Object.values(config.roles).filter((a) => a.enabled);
+
+      if (agents.length === 0) {
+        ui.error('No enabled agents configured.');
+        ui.info(`Run ${chalk.cyan('boatclaw agents add')} to add one.`);
+        process.exit(1);
+      }
+
+      ui.showLogo();
+
+      if (options.dryRun) {
+        ui.warning('Dry run mode - no changes will be made');
+        console.log();
+      }
+
+      // Check AI availability
+      const aiCheck = await checkAIAvailability(config.ai.provider);
+      if (!aiCheck.available) {
+        ui.error(`AI provider "${config.ai.provider}" is not available.`);
+        if (aiCheck.error) {
+          ui.dim(`  ${aiCheck.error}`);
+        }
+        ui.info(`Make sure the ${config.ai.provider} CLI is installed and in your PATH.`);
+        process.exit(1);
+      }
+
+      ui.success(`AI provider: ${config.ai.provider} v${aiCheck.version || 'unknown'}`);
+      console.log();
+
+      // Create provider and worker
+      const spinner = ui.spinner('Connecting to board...').start();
+
+      try {
+        const provider = createBoardProvider();
+        const connected = await provider.verifyConnection();
+
+        if (!connected) {
+          spinner.fail('Failed to connect to board');
+          process.exit(1);
+        }
+
+        spinner.succeed('Connected to board');
+
+        // Show configuration
+        console.log();
+        ui.keyValue('Platform', config.platform || '');
+        ui.keyValue('Board', config.trello.boardName || config.trello.boardId);
+        ui.keyValue('Poll Interval', `${config.worker.pollInterval}s`);
+        ui.keyValue('Agents', agents.map((a) => a.name).join(', '));
+        console.log();
+
+        // Check GitHub configuration
+        const githubEnabled = !!(config.github.enabled &&
+                                 config.github.token &&
+                                 config.github.createPrs);
+
+        if (githubEnabled) {
+          ui.success('GitHub PR creation enabled');
+        }
+
+        // Show projects
+        const projects = Object.values(config.projects);
+        if (projects.length > 0) {
+          ui.keyValue('Projects', projects.map((p) => p.name).join(', '));
+        }
+        console.log();
+
+        // Create AI task processor with multi-project support
+        const taskProcessor = createTaskProcessorFunction({
+          dryRun: options.dryRun,
+          createPRs: githubEnabled,
+          githubToken: config.github.token,
+        });
+
+        // Create worker with AI task processor
+        const worker = createWorker(provider, {
+          dryRun: options.dryRun,
+          pollIntervalMs: (config.worker.pollInterval || 3) * 1000,
+          maxParallelTasks: config.worker.maxParallelTasks || 10,
+          taskProcessor,
+        });
+
+        // Set up event handlers
+        setupWorkerEvents(worker, options.dryRun || false);
+
+        // Handle shutdown
+        let isShuttingDown = false;
+
+        const shutdown = async () => {
+          if (isShuttingDown) return;
+          isShuttingDown = true;
+
+          console.log();
+          ui.info('Stopping worker...');
+
+          await worker.stop();
+          await provider.close();
+
+          ui.success('Worker stopped');
+          process.exit(0);
+        };
+
+        process.on('SIGINT', shutdown);
+        process.on('SIGTERM', shutdown);
+
+        // Start worker
+        ui.info('Starting worker...');
+        console.log();
+        ui.divider();
+        console.log(chalk.dim('Watching for cards in trigger list...'));
+        console.log(chalk.dim('Press Ctrl+C to stop'));
+        console.log();
+
+        await worker.start();
+      } catch (error) {
+        spinner.fail('Failed to start worker');
+        if (error instanceof Error) {
+          ui.error(error.message);
+        }
+        process.exit(1);
+      }
+    });
+
+  // Stop command (for future daemon support)
+  program
+    .command('stop')
+    .description('Stop the Boatclaw worker')
+    .action(async () => {
+      ui.info('Worker runs in foreground. Press Ctrl+C to stop.');
+    });
+}
+
+function setupWorkerEvents(worker: Worker, dryRun: boolean): void {
+  let pollCount = 0;
+
+  worker.on('stateChange', (state) => {
+    if (state === 'running') {
+      // Already handled in start
+    } else if (state === 'stopped') {
+      // Already handled in shutdown
+    }
+  });
+
+  worker.on('poll', (cardsFound: number) => {
+    pollCount++;
+    if (cardsFound > 0) {
+      console.log(
+        chalk.cyan(`[${timestamp()}]`) +
+          ` Found ${cardsFound} card(s) in trigger list`
+      );
+    } else if (pollCount % 20 === 0) {
+      // Log every 20 polls (~60 seconds) when idle
+      console.log(
+        chalk.dim(`[${timestamp()}]`) + chalk.dim(' Polling... (no tasks)')
+      );
+    }
+  });
+
+  worker.on('taskStart', (card: Card, role: RoleConfig) => {
+    console.log();
+    console.log(
+      chalk.cyan(`[${timestamp()}]`) +
+        chalk.bold(` Starting task: ${card.title}`)
+    );
+    console.log(chalk.dim(`  Agent: ${role.name} | Card ID: ${card.id}`));
+    if (dryRun) {
+      console.log(chalk.yellow('  (dry run - no changes will be made)'));
+    }
+  });
+
+  worker.on('taskComplete', (result: TaskResult) => {
+    if (result.success) {
+      console.log(
+        chalk.green(`[${timestamp()}]`) +
+          chalk.green(` ✓ Task completed: ${result.cardTitle}`)
+      );
+      // Show all PRs if multi-project
+      if (result.prUrls && result.prUrls.length > 0) {
+        for (const prUrl of result.prUrls) {
+          console.log(chalk.cyan(`  PR: ${prUrl}`));
+        }
+      } else if (result.prUrl) {
+        console.log(chalk.cyan(`  PR: ${result.prUrl}`));
+      }
+      // Show project results if available
+      if (result.projectResults && result.projectResults.length > 1) {
+        for (const pr of result.projectResults) {
+          const status = pr.success ? chalk.green('✓') : chalk.red('✗');
+          console.log(chalk.dim(`  ${status} ${pr.projectName}`));
+        }
+      }
+    } else {
+      console.log(
+        chalk.red(`[${timestamp()}]`) +
+          chalk.red(` ✗ Task failed: ${result.cardTitle}`)
+      );
+      if (result.error) {
+        console.log(chalk.dim(`  Error: ${result.error.slice(0, 100)}`));
+      }
+      // Show failed project details
+      if (result.projectResults) {
+        for (const pr of result.projectResults) {
+          if (!pr.success && pr.error) {
+            console.log(chalk.dim(`  ${pr.projectName}: ${pr.error.slice(0, 50)}`));
+          }
+        }
+      }
+    }
+    console.log(
+      chalk.dim(`  Duration: ${(result.durationMs / 1000).toFixed(1)}s`)
+    );
+    console.log();
+  });
+
+  worker.on('taskError', (card: Card, error: Error) => {
+    console.log(
+      chalk.red(`[${timestamp()}]`) + chalk.red(` Error processing: ${card.title}`)
+    );
+    console.log(chalk.dim(`  ${error.message}`));
+  });
+
+  worker.on('error', (error: Error) => {
+    console.log(chalk.red(`[${timestamp()}]`) + chalk.red(` Worker error: ${error.message}`));
+  });
+}
+
+function timestamp(): string {
+  return new Date().toLocaleTimeString('en-US', { hour12: false });
+}
+
+function truncatePath(path: string, maxLen: number): string {
+  if (path.length <= maxLen) return path;
+  // Show the last part of the path with ellipsis
+  const parts = path.split('/');
+  let result = '';
+  for (let i = parts.length - 1; i >= 0; i--) {
+    const candidate = parts.slice(i).join('/');
+    if (candidate.length + 3 <= maxLen) {
+      result = '.../' + candidate;
+    } else {
+      break;
+    }
+  }
+  return result || path.slice(-maxLen + 3) + '...';
+}
