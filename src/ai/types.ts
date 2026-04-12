@@ -59,6 +59,7 @@ export interface TaskContext {
   projectContext?: string;  // Project-specific context
   roleContext?: string;     // Engineer-specific context
   additionalInstructions?: string;
+  interactive?: boolean;    // Whether ask_human tool is available
 }
 
 /**
@@ -68,9 +69,15 @@ export interface TaskContext {
  */
 export interface AIProvider {
   /**
-   * Provider name (claude, cursor).
+   * Provider name (claude, cursor, codex).
    */
   readonly name: string;
+
+  /**
+   * Whether this provider supports interactive mode (ask_human).
+   * Only Claude Code supports this via MCP.
+   */
+  readonly interactive?: boolean;
 
   /**
    * Check if the AI CLI is available.
@@ -92,7 +99,7 @@ export interface AIProvider {
  * Configuration for AI provider.
  */
 export interface AIProviderConfig {
-  provider: 'claude' | 'cursor';
+  provider: 'claude' | 'cursor' | 'codex';
   defaultModel: Model;
   timeoutSeconds: number;
   maxRetries?: number;
