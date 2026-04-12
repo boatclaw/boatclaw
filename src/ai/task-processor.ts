@@ -53,6 +53,8 @@ export interface TaskProcessorOptions {
   dryRun?: boolean;
   createPRs?: boolean;
   githubToken?: string;
+  /** Enable interactive mode (ask_human) - only works with Claude */
+  interactive?: boolean;
 }
 
 /**
@@ -69,27 +71,64 @@ export interface TaskProcessorOptions {
  * 2. Aggregate results
  */
 export class TaskProcessor {
-  private provider: AIProvider;
+  private baseProvider: AIProvider;
   private createPRs: boolean;
   private githubToken?: string;
   private dryRun: boolean;
+  private interactive: boolean;
 
   constructor(options?: TaskProcessorOptions) {
-    // Create provider from config if not provided
+    this.interactive = options?.interactive ?? false;
+
+    // Create base provider from config if not provided
     if (options?.provider) {
-      this.provider = options.provider;
+      this.baseProvider = options.provider;
     } else {
       const config = configManager.load();
-      this.provider = createAIProvider({
+      this.baseProvider = createAIProvider({
         provider: config.ai.provider,
         defaultModel: config.ai.defaultModel as Model,
         timeoutSeconds: config.ai.timeoutSeconds,
+        // Note: interactive mode requires card-specific provider, created in getProviderForCard
       });
     }
 
     this.createPRs = options?.createPRs ?? false;
     this.githubToken = options?.githubToken;
     this.dryRun = options?.dryRun ?? false;
+  }
+
+  /**
+   * Get AI provider for a specific card.
+   * For interactive mode with Claude, creates a provider with MCP config.
+   */
+  private getProviderForCard(cardId: string): AIProvider {
+    // Only Claude supports interactive mode
+    log.info('getProviderForCard called', {
+      cardId,
+      interactive: this.interactive,
+      baseProviderName: this.baseProvider.name,
+    });
+
+    if (this.interactive && this.baseProvider.name === 'claude') {
+      const config = configManager.load();
+      log.info('Creating interactive Claude provider with MCP', {
+        cardId,
+        platform: config.platform,
+      });
+      return createAIProvider({
+        provider: 'claude',
+        defaultModel: config.ai.defaultModel as Model,
+        timeoutSeconds: config.ai.timeoutSeconds,
+        interactive: true,
+        mcpConfig: {
+          cardId,
+          boardProvider: config.platform as 'trello' | 'jira' | 'linear',
+        },
+      });
+    }
+
+    return this.baseProvider;
   }
 
   /**
@@ -209,6 +248,7 @@ export class TaskProcessor {
         additionalInstructions: options?.additionalInstructions,
         projectName: project.name,
         projectPath: project.path,
+        interactive: this.interactive,
       });
 
       // 3. Select model
@@ -239,9 +279,15 @@ export class TaskProcessor {
         };
       }
 
-      // 6. Execute with AI provider
-      log.info('Executing AI provider', { model: modelSelection.model, workingDir, project: project.name });
-      const result = await this.provider.execute({
+      // 6. Execute with AI provider (card-specific for interactive mode)
+      const provider = this.getProviderForCard(card.id);
+      log.info('Executing AI provider', {
+        model: modelSelection.model,
+        workingDir,
+        project: project.name,
+        interactive: this.interactive && provider.name === 'claude',
+      });
+      const result = await provider.execute({
         prompt,
         workingDir,
         model: modelSelection.model,
@@ -330,14 +376,21 @@ export class TaskProcessor {
    * Check if the AI provider is available.
    */
   async isAvailable(): Promise<boolean> {
-    return this.provider.isAvailable();
+    return this.baseProvider.isAvailable();
   }
 
   /**
    * Get provider version.
    */
   async getVersion(): Promise<string | null> {
-    return this.provider.getVersion();
+    return this.baseProvider.getVersion();
+  }
+
+  /**
+   * Check if interactive mode is enabled and supported.
+   */
+  isInteractive(): boolean {
+    return this.interactive && this.baseProvider.name === 'claude';
   }
 }
 

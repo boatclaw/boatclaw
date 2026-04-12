@@ -1,7 +1,10 @@
 import { defineConfig } from 'tsup';
 
 export default defineConfig({
-  entry: ['src/index.ts'],
+  entry: [
+    'src/index.ts',
+    'src/mcp-server.ts',  // MCP server for ask_human tool
+  ],
   format: ['esm'],
   target: 'node18',
   outDir: 'dist',
@@ -24,5 +27,6 @@ export default defineConfig({
     'pino',
     'pino-pretty',
     'zod',
+    '@modelcontextprotocol/sdk',
   ],
 });

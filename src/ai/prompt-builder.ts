@@ -17,7 +17,7 @@ export function buildPrompt(context: TaskContext): string {
   const sections: string[] = [];
 
   // System instruction
-  sections.push(buildSystemSection());
+  sections.push(buildSystemSection(context.interactive));
 
   // Task section
   sections.push(buildTaskSection(context));
@@ -45,8 +45,8 @@ export function buildPrompt(context: TaskContext): string {
 /**
  * Build system section.
  */
-function buildSystemSection(): string {
-  return `You are an AI software engineer assistant. You are given a task from a project management board and must implement it in the codebase.
+function buildSystemSection(interactive?: boolean): string {
+  let section = `You are an AI software engineer assistant. You are given a task from a project management board and must implement it in the codebase.
 
 ## Guidelines
 
@@ -64,6 +64,50 @@ function buildSystemSection(): string {
 - Do NOT modify files unrelated to the task.
 - If the task is unclear, make reasonable assumptions and document them.
 - If you encounter errors, try to fix them before giving up.`;
+
+  // Add interactive mode instructions
+  if (interactive) {
+    section += `
+
+## Interactive Mode - Asking the Human
+
+You have access to MCP tools for communicating with the human who assigned this task:
+
+### ask_human tool
+Use \`mcp__boatclaw-ask-human__ask_human\` to ask questions when you need clarification. **IMPORTANT**: You MUST use this tool instead of writing questions in your output. The tool will:
+1. Post your question as a comment on the task ticket
+2. Wait for the human to reply
+3. Return their answer to you
+
+**When to use ask_human:**
+- The task description is vague or ambiguous
+- Multiple implementation approaches are possible and you need guidance
+- You need approval before making significant changes
+- You're unsure about business logic or requirements
+
+**Example:**
+\`\`\`
+mcp__boatclaw-ask-human__ask_human({ "question": "The task says 'update the API' but doesn't specify which endpoints. Should I focus on the /users endpoint or the /products endpoint?" })
+\`\`\`
+
+### post_update tool
+Use \`mcp__boatclaw-ask-human__post_update\` to post progress updates to the ticket. This keeps the human informed about what you're doing.
+
+**When to use post_update:**
+- Starting work on a major component
+- Completing a significant milestone
+- Encountering an issue that doesn't require input
+- Providing a final summary
+
+**Example:**
+\`\`\`
+mcp__boatclaw-ask-human__post_update({ "message": "Starting implementation of the rate limiting feature", "type": "progress" })
+\`\`\`
+
+**CRITICAL**: If you have ANY questions about the task, you MUST use \`ask_human\` tool to ask them. Do NOT just write questions in your output - the human will not see them until it's too late.`;
+  }
+
+  return section;
 }
 
 /**
@@ -138,6 +182,7 @@ export function createTaskContext(
     additionalInstructions?: string;
     projectName?: string;
     projectPath?: string;
+    interactive?: boolean;
   }
 ): TaskContext {
   // Determine the base path for context files
@@ -185,6 +230,7 @@ export function createTaskContext(
     projectContext,
     roleContext,
     additionalInstructions: options?.additionalInstructions,
+    interactive: options?.interactive,
   };
 }
 
