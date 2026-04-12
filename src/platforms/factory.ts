@@ -4,46 +4,51 @@
 
 import { BoardProvider } from './types.js';
 import { TrelloProvider } from './trello.js';
+import { JiraProvider } from './jira.js';
+import { LinearProvider } from './linear.js';
 import { configManager, Platform } from '../core/config.js';
 import { ConfigurationError } from '../core/errors.js';
 
 /**
  * Create a board provider based on current configuration.
+ *
+ * @param platform - Optional platform override (defaults to config value)
+ * @param configOverride - Optional config override (defaults to global config)
  */
-export function createBoardProvider(): BoardProvider {
-  const config = configManager.load();
-  const platform = config.platform;
+export function createBoardProvider(
+  platform?: Platform,
+  configOverride?: ReturnType<typeof configManager.load>
+): BoardProvider {
+  const config = configOverride || configManager.load();
+  const targetPlatform = platform || config.platform;
 
-  if (!platform) {
+  if (!targetPlatform) {
     throw new ConfigurationError(
       'No platform configured. Run "boatclaw setup" first.'
     );
   }
 
-  switch (platform) {
+  switch (targetPlatform) {
     case 'trello':
-      return createTrelloProviderFromConfig();
+      return createTrelloProviderFromConfig(config);
 
     case 'jira':
-      throw new ConfigurationError(
-        'Jira integration coming soon. Currently only Trello is supported.'
-      );
+      return createJiraProviderFromConfig(config);
 
     case 'linear':
-      throw new ConfigurationError(
-        'Linear integration coming soon. Currently only Trello is supported.'
-      );
+      return createLinearProviderFromConfig(config);
 
     default:
-      throw new ConfigurationError(`Unknown platform: ${platform}`);
+      throw new ConfigurationError(`Unknown platform: ${targetPlatform}`);
   }
 }
 
 /**
  * Create a Trello provider from current configuration.
  */
-function createTrelloProviderFromConfig(): TrelloProvider {
-  const config = configManager.load();
+function createTrelloProviderFromConfig(
+  config: ReturnType<typeof configManager.load>
+): TrelloProvider {
   const trelloConfig = config.trello;
 
   if (!trelloConfig.apiKey) {
@@ -128,4 +133,58 @@ export function verifyWorkflowConfig(): { valid: boolean; errors: string[] } {
   };
 }
 
-export { TrelloProvider };
+/**
+ * Create a Jira provider from current configuration.
+ */
+function createJiraProviderFromConfig(
+  config: ReturnType<typeof configManager.load>
+): JiraProvider {
+  const jiraConfig = config.jira;
+
+  if (!jiraConfig.instanceUrl) {
+    throw new ConfigurationError('Jira instance URL not configured');
+  }
+
+  if (!jiraConfig.email) {
+    throw new ConfigurationError('Jira email not configured');
+  }
+
+  if (!jiraConfig.apiToken) {
+    throw new ConfigurationError('Jira API token not configured');
+  }
+
+  if (!jiraConfig.projectKey) {
+    throw new ConfigurationError('Jira project key not configured');
+  }
+
+  return new JiraProvider({
+    instanceUrl: jiraConfig.instanceUrl,
+    email: jiraConfig.email,
+    apiToken: jiraConfig.apiToken,
+    projectKey: jiraConfig.projectKey,
+  });
+}
+
+/**
+ * Create a Linear provider from current configuration.
+ */
+function createLinearProviderFromConfig(
+  config: ReturnType<typeof configManager.load>
+): LinearProvider {
+  const linearConfig = config.linear;
+
+  if (!linearConfig.apiKey) {
+    throw new ConfigurationError('Linear API key not configured');
+  }
+
+  if (!linearConfig.teamId) {
+    throw new ConfigurationError('Linear team ID not configured');
+  }
+
+  return new LinearProvider({
+    apiKey: linearConfig.apiKey,
+    teamId: linearConfig.teamId,
+  });
+}
+
+export { TrelloProvider, JiraProvider, LinearProvider };
