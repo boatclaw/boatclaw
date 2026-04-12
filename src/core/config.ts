@@ -15,7 +15,7 @@ import { CONFIG_FILE, ensureDirs } from './paths.js';
 export const PlatformSchema = z.enum(['trello', 'jira', 'linear']);
 export type Platform = z.infer<typeof PlatformSchema>;
 
-export const AIProviderSchema = z.enum(['claude', 'cursor']);
+export const AIProviderSchema = z.enum(['claude', 'cursor', 'codex']);
 export type AIProvider = z.infer<typeof AIProviderSchema>;
 
 export const ModelSchema = z.enum(['auto', 'haiku', 'sonnet', 'opus']);
@@ -105,9 +105,12 @@ export type GitHubConfig = z.infer<typeof GitHubConfigSchema>;
 
 export const AIConfigSchema = z.object({
   provider: AIProviderSchema.default('claude'),
+  availableProviders: z.array(AIProviderSchema).optional(),
   defaultModel: ModelSchema.default('auto'),
   apiKey: z.string().optional(),
   timeoutSeconds: z.number().default(1800),
+  /** Enable interactive mode (ask_human) - only works with Claude Code */
+  interactive: z.boolean().default(false),
 });
 export type AIConfig = z.infer<typeof AIConfigSchema>;
 

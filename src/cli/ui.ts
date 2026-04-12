@@ -19,19 +19,14 @@ const WEBSITE = 'boatclaw.dev';
 const TAGLINE = 'AI Task Automation';
 
 export function showLogo(): void {
-  const cyan = chalk.cyan;
-  const bold = chalk.bold;
-  const dim = chalk.dim;
+  const innerWidth = 36;
 
   console.log();
-  console.log('  ' + cyan('╭──────────────────────────────────────╮'));
-  console.log('  ' + cyan('│') + '                                      ' + cyan('│'));
-  console.log('  ' + cyan('│') + '     ' + cyan.bold('⚓') + '  ' + bold.white(BRAND) + '                    ' + cyan('│'));
-  console.log('  ' + cyan('│') + '        ' + dim(TAGLINE) + '           ' + cyan('│'));
-  console.log('  ' + cyan('│') + '                                      ' + cyan('│'));
-  console.log('  ' + cyan('│') + '        ' + dim(WEBSITE) + '                  ' + cyan('│'));
-  console.log('  ' + cyan('│') + '                                      ' + cyan('│'));
-  console.log('  ' + cyan('╰──────────────────────────────────────╯'));
+  console.log('  ' + chalk.cyan('┌' + '─'.repeat(innerWidth) + '┐'));
+  console.log('  ' + chalk.cyan('│') + ' ' + chalk.cyan.bold('⚓') + ' ' + chalk.bold.white(BRAND) + chalk.dim(' · ' + TAGLINE) + '   ' + chalk.cyan('│'));
+  console.log('  ' + chalk.cyan('│') + ' '.repeat(innerWidth) + chalk.cyan('│'));
+  console.log('  ' + chalk.cyan('│') + chalk.dim('           ──boatclaw.dev──         ') + chalk.cyan('│'));
+  console.log('  ' + chalk.cyan('└' + '─'.repeat(innerWidth) + '┘'));
   console.log();
 }
 
@@ -53,16 +48,16 @@ export function spacer(): void {
  * Clean bordered header with cyan accent.
  */
 export function header(title: string): void {
-  const width = 45;
-  const padding = Math.max(0, width - title.length - 4);
+  const width = 35;
+  const textLen = title.length;
+  const padding = Math.max(0, width - textLen);
   const leftPad = Math.floor(padding / 2);
   const rightPad = padding - leftPad;
 
   console.log();
-  console.log();
-  console.log(chalk.cyan('  ╭' + '─'.repeat(width) + '╮'));
-  console.log(chalk.cyan('  │') + ' '.repeat(leftPad + 2) + chalk.bold.white(title) + ' '.repeat(rightPad + 2) + chalk.cyan('│'));
-  console.log(chalk.cyan('  ╰' + '─'.repeat(width) + '╯'));
+  console.log('  ' + chalk.cyan('┌' + '─'.repeat(width) + '┐'));
+  console.log('  ' + chalk.cyan('│') + ' '.repeat(leftPad) + chalk.bold.white(title) + ' '.repeat(rightPad) + chalk.cyan('│'));
+  console.log('  ' + chalk.cyan('└' + '─'.repeat(width) + '┘'));
   console.log();
 }
 
@@ -223,8 +218,8 @@ export function spinner(text: string): Ora {
 /**
  * Simple info box for important information.
  */
-export function infoBox(lines: string[]): void {
-  const width = 48;
+export function infoBox(lines: string[], options?: { width?: number }): void {
+  const width = options?.width ?? 48;
   console.log();
   console.log(chalk.cyan('  ┌' + '─'.repeat(width) + '┐'));
   for (const line of lines) {

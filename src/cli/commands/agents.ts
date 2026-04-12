@@ -8,12 +8,14 @@
  * - agents enable <name>: Enable an agent
  * - agents disable <name>: Disable an agent
  * - agents context <name>: Add/edit agent context
+ * - agents ask <name>: Interactive chat with an agent
  */
 
 import { Command } from 'commander';
 import chalk from 'chalk';
 import inquirer from 'inquirer';
 import * as readline from 'readline';
+import { spawn } from 'child_process';
 import { configManager, type RoleConfig } from '../../core/config.js';
 import { isInitialized } from '../../core/paths.js';
 import * as ui from '../ui.js';
@@ -207,6 +209,21 @@ export function registerAgentsCommands(program: Command): void {
     .action(async (name: string) => {
       await editAgentContext(name);
     });
+
+  // Ask agent (interactive chat)
+  agents
+    .command('ask <name>')
+    .description('Start interactive chat with an agent')
+    .option('-p, --project <project>', 'Project context to use')
+    .action(async (name: string, options: { project?: string }) => {
+      if (!isInitialized()) {
+        ui.error('Boatclaw is not configured.');
+        ui.info(`Run ${chalk.cyan('boatclaw setup')} first.`);
+        return;
+      }
+
+      await askAgent(name, options.project);
+    });
 }
 
 async function addAgent(): Promise<void> {
@@ -266,15 +283,16 @@ async function addAgent(): Promise<void> {
       const { selected } = await inquirer.prompt([{
         type: 'checkbox',
         name: 'selected',
-        message: 'Select projects:',
+        message: 'Select projects (space to select, enter to confirm):',
         choices: projects.map((p) => ({ name: p, value: p })),
+        validate: (answer: string[]) => {
+          if (answer.length === 0) {
+            return 'Please select at least one project (use space to select)';
+          }
+          return true;
+        },
       }]);
       selectedProjects = selected;
-
-      if (selectedProjects.length === 0) {
-        ui.warning('No projects selected. Agent will work on all projects.');
-        selectedProjects = ['*'];
-      }
     }
   } else {
     ui.dim('No projects configured yet. Add projects with: boatclaw projects add');
@@ -480,6 +498,137 @@ async function inputContextInline(prompt: string): Promise<string> {
   });
 }
 
+async function askAgent(name: string, projectName?: string): Promise<void> {
+  const existingAgents = configManager.getRoles();
+
+  if (!(name in existingAgents)) {
+    ui.error(`Agent "${name}" not found.`);
+    const available = Object.keys(existingAgents);
+    if (available.length > 0) {
+      ui.info('Available agents: ' + available.join(', '));
+    }
+    return;
+  }
+
+  const agent = existingAgents[name];
+  const projects = configManager.getProjects();
+  const projectList = Object.values(projects);
+
+  // Determine which project to use
+  let project = projectName ? projects[projectName] : undefined;
+
+  if (projectName && !project) {
+    ui.error(`Project "${projectName}" not found.`);
+    return;
+  }
+
+  // If no project specified, determine from agent's scope or ask
+  if (!project) {
+    if (agent.projects && !agent.projects.includes('*')) {
+      // Agent has specific project scope - use first one
+      const firstProject = agent.projects[0];
+      if (firstProject && projects[firstProject]) {
+        project = projects[firstProject];
+      }
+    } else if (projectList.length === 1) {
+      // Only one project - use it
+      project = projectList[0];
+    } else if (projectList.length > 1) {
+      // Multiple projects - ask user to select
+      const { selected } = await inquirer.prompt([{
+        type: 'list',
+        name: 'selected',
+        message: 'Select project to work in:',
+        choices: projectList.map((p) => ({ name: `${p.name} (${p.path})`, value: p.name })),
+      }]);
+      project = projects[selected];
+    }
+  }
+
+  // Use project path or current directory
+  const projectPath = project?.path || process.cwd();
+
+  // Build context from agent + project
+  const contextParts: string[] = [];
+
+  if (agent.context) {
+    contextParts.push(`Agent context (${agent.name}):\n${agent.context}`);
+  }
+
+  if (project?.context) {
+    contextParts.push(`Project context (${project.name}):\n${project.context}`);
+  }
+
+  const fullContext = contextParts.join('\n\n---\n\n');
+
+  // Get provider (agent's provider or default)
+  const provider = agent.provider || configManager.get<string>('ai.provider') || 'claude';
+
+  console.log();
+  console.log(chalk.cyan('  ┌' + '─'.repeat(50) + '┐'));
+  console.log(chalk.cyan('  │') + chalk.bold(` Chat with ${agent.name}`.padEnd(50)) + chalk.cyan('│'));
+  console.log(chalk.cyan('  │') + chalk.dim(` Provider: ${provider}, Model: ${agent.model}`.padEnd(50)) + chalk.cyan('│'));
+  if (project) {
+    console.log(chalk.cyan('  │') + chalk.dim(` Project: ${project.name}`.padEnd(50)) + chalk.cyan('│'));
+  }
+  console.log(chalk.cyan('  │') + chalk.dim(` Path: ${projectPath}`.slice(0, 51).padEnd(50)) + chalk.cyan('│'));
+  const hasContext = agent.context || project?.context;
+  console.log(chalk.cyan('  │') + chalk.dim(` Context: ${hasContext ? '✓ Loaded' : 'None'}`.padEnd(50)) + chalk.cyan('│'));
+  console.log(chalk.cyan('  └' + '─'.repeat(50) + '┘'));
+  console.log();
+
+  // Spawn Claude CLI
+  const cliCommand = provider === 'cursor' ? 'cursor' : 'claude';
+
+  // Build command args
+  const args: string[] = [];
+
+  // Add model if not auto
+  if (agent.model && agent.model !== 'auto') {
+    args.push('--model', agent.model);
+  }
+
+  // Add system prompt with context
+  if (fullContext) {
+    args.push('--system-prompt', fullContext);
+  }
+
+  // Spawn interactive session
+  const child = spawn(cliCommand, args, {
+    cwd: projectPath,
+    stdio: 'inherit',
+    shell: true,
+  });
+
+  child.on('error', (err) => {
+    if (err.message.includes('ENOENT')) {
+      ui.error(`${cliCommand} CLI not found. Please install it first.`);
+      if (provider === 'claude') {
+        ui.info('Install Claude Code: https://claude.ai/code');
+      }
+    } else {
+      ui.error(`Failed to start ${cliCommand}: ${err.message}`);
+    }
+  });
+
+  child.on('close', (code) => {
+    console.log();
+    if (code === 0) {
+      ui.success('Chat session ended');
+    }
+  });
+
+  // Handle Ctrl+C gracefully
+  process.on('SIGINT', () => {
+    child.kill('SIGINT');
+  });
+
+  // Wait for the child process to finish
+  await new Promise<void>((resolve) => {
+    child.on('close', () => resolve());
+  });
+}
+
 function listAgents(): void {
   if (!isInitialized()) {
     ui.error('Boatclaw is not configured.');
@@ -532,6 +681,7 @@ function listAgents(): void {
 
   ui.actions([
     { cmd: 'boatclaw agents add', desc: 'Add a new agent' },
+    { cmd: 'boatclaw agents ask <name>', desc: 'Chat with an agent' },
     { cmd: 'boatclaw agents show <name>', desc: 'View agent details' },
     { cmd: 'boatclaw agents remove <name>', desc: 'Remove an agent' },
     { cmd: 'boatclaw agents enable <name>', desc: 'Enable an agent' },

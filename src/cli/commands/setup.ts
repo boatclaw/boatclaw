@@ -16,6 +16,8 @@ import chalk from 'chalk';
 import { configManager, Platform, type RoleConfig, type ProjectConfig } from '../../core/config.js';
 import { ensureDirs, isInitialized } from '../../core/paths.js';
 import { TrelloProvider } from '../../platforms/trello.js';
+import { JiraProvider } from '../../platforms/jira.js';
+import { LinearProvider } from '../../platforms/linear.js';
 import * as ui from '../ui.js';
 import { selectPath, detectGitHubRepo, isGitRepo, getDefaultBranch, inputMultilineText } from '../prompts.js';
 import { existsSync, writeFileSync } from 'fs';
@@ -86,11 +88,11 @@ async function setupPlatform(): Promise<void> {
     {
       type: 'list',
       name: 'platform',
-      message: 'Which platform do you use?',
+      message: 'Which platform do you use for task management?',
       choices: [
-        { name: 'Trello', value: 'trello' },
-        { name: 'Jira (coming soon)', value: 'jira', disabled: true },
-        { name: 'Linear (coming soon)', value: 'linear', disabled: true },
+        { name: 'Trello    - Simple boards with lists and cards', value: 'trello' },
+        { name: 'Jira      - Atlassian project management', value: 'jira' },
+        { name: 'Linear    - Modern issue tracking for teams', value: 'linear' },
       ],
     },
   ]);
@@ -204,29 +206,234 @@ async function setupTrello(): Promise<void> {
 }
 
 async function setupJira(): Promise<void> {
-  ui.error('Jira integration coming soon. Please use Trello for now.');
-  process.exit(1);
+  ui.infoBox([
+    'Get your Jira API credentials:',
+    '',
+    '1. Go to: https://id.atlassian.com/manage-profile/security/api-tokens',
+    '2. Click "Create API token"',
+    '3. Copy the generated token',
+  ]);
+
+  const credentials = await inquirer.prompt([
+    {
+      type: 'input',
+      name: 'instanceUrl',
+      message: 'Jira instance URL (e.g., https://yourcompany.atlassian.net):',
+      validate: (input: string) => {
+        if (!input) return 'URL is required';
+        if (!input.startsWith('https://')) return 'URL must start with https://';
+        return true;
+      },
+      filter: (input: string) => input.replace(/\/$/, ''), // Remove trailing slash
+    },
+    {
+      type: 'input',
+      name: 'email',
+      message: 'Your Jira email:',
+      validate: (input: string) => input.includes('@') || 'Enter a valid email',
+    },
+    {
+      type: 'password',
+      name: 'apiToken',
+      message: 'Jira API Token:',
+      mask: '*',
+      validate: (input: string) => input.length > 0 || 'API token is required',
+    },
+  ]);
+
+  // Verify credentials and fetch projects
+  const spinner = ui.spinner('Verifying credentials...').start();
+
+  try {
+    const axios = await import('axios');
+    const auth = Buffer.from(`${credentials.email}:${credentials.apiToken}`).toString('base64');
+
+    const response = await axios.default.get(
+      `${credentials.instanceUrl}/rest/api/3/project`,
+      {
+        headers: {
+          'Authorization': `Basic ${auth}`,
+          'Accept': 'application/json',
+        },
+      }
+    );
+
+    spinner.succeed('Credentials verified!');
+
+    const projects = response.data as Array<{ id: string; key: string; name: string }>;
+
+    if (projects.length === 0) {
+      ui.error('No projects found. Create a project in Jira first.');
+      process.exit(1);
+    }
+
+    // Let user select a project
+    ui.blank();
+    const { projectKey } = await inquirer.prompt([
+      {
+        type: 'list',
+        name: 'projectKey',
+        message: 'Select your project:',
+        choices: projects.map((project) => ({
+          name: `${project.name} (${project.key})`,
+          value: project.key,
+        })),
+      },
+    ]);
+
+    const selectedProject = projects.find((p) => p.key === projectKey)!;
+
+    // Save configuration
+    configManager.set('jira.instanceUrl', credentials.instanceUrl);
+    configManager.set('jira.email', credentials.email);
+    configManager.set('jira.apiToken', credentials.apiToken);
+    configManager.set('jira.projectKey', projectKey);
+    configManager.set('jira.projectName', selectedProject.name);
+
+    ui.success(`Project "${selectedProject.name}" selected!`);
+  } catch (error) {
+    spinner.fail('Failed to verify credentials');
+    if (error instanceof Error) {
+      ui.error(error.message);
+    }
+    throw error;
+  }
 }
 
 async function setupLinear(): Promise<void> {
-  ui.error('Linear integration coming soon. Please use Trello for now.');
-  process.exit(1);
+  // First ask for workspace name to build the correct URL
+  const { workspaceName } = await inquirer.prompt([
+    {
+      type: 'input',
+      name: 'workspaceName',
+      message: 'Linear workspace name (from URL):',
+      validate: (input: string) => input.length > 0 || 'Workspace name is required',
+    },
+  ]);
+
+  const workspaceSlug = workspaceName.toLowerCase().replace(/\s+/g, '-');
+
+  ui.infoBox([
+    'Get your Linear API key:',
+    '',
+    '1. Go to: Settings → Account → Security',
+    `2. Or: https://linear.app/${workspaceSlug}/settings/account/security`,
+    '3. Click "New API key"',
+    '4. Copy the generated key',
+  ], { width: 70 });
+
+  const { apiKey } = await inquirer.prompt([
+    {
+      type: 'password',
+      name: 'apiKey',
+      message: 'Linear API Key:',
+      mask: '*',
+      validate: (input: string) => input.length > 0 || 'API key is required',
+    },
+  ]);
+
+  // Verify credentials and fetch teams
+  const spinner = ui.spinner('Verifying credentials...').start();
+
+  try {
+    const axios = await import('axios');
+
+    const response = await axios.default.post(
+      'https://api.linear.app/graphql',
+      {
+        query: `
+          query {
+            teams {
+              nodes {
+                id
+                key
+                name
+              }
+            }
+          }
+        `,
+      },
+      {
+        headers: {
+          'Authorization': apiKey,
+          'Content-Type': 'application/json',
+        },
+      }
+    );
+
+    if (response.data.errors?.length) {
+      throw new Error(response.data.errors[0].message);
+    }
+
+    spinner.succeed('Credentials verified!');
+
+    const teams = response.data.data.teams.nodes as Array<{ id: string; key: string; name: string }>;
+
+    if (teams.length === 0) {
+      ui.error('No teams found. Create a team in Linear first.');
+      process.exit(1);
+    }
+
+    // Let user select a team
+    ui.blank();
+    const { teamId } = await inquirer.prompt([
+      {
+        type: 'list',
+        name: 'teamId',
+        message: 'Select your team:',
+        choices: teams.map((team) => ({
+          name: `${team.name} (${team.key})`,
+          value: team.id,
+        })),
+      },
+    ]);
+
+    const selectedTeam = teams.find((t) => t.id === teamId)!;
+
+    // Save configuration
+    configManager.set('linear.apiKey', apiKey);
+    configManager.set('linear.teamId', teamId);
+    configManager.set('linear.teamName', selectedTeam.name);
+
+    ui.success(`Team "${selectedTeam.name}" selected!`);
+  } catch (error) {
+    spinner.fail('Failed to verify credentials');
+    if (error instanceof Error) {
+      ui.error(error.message);
+    }
+    throw error;
+  }
 }
 
 async function setupWorkflow(): Promise<void> {
   ui.header('STEP 2 · Workflow');
 
-  ui.dim('Configure which lists Boatclaw should use.');
-  ui.dim('Cards will flow: Trigger → Working → Success/Failed');
-  ui.blank();
-
   const platform = configManager.get<Platform>('platform');
 
-  if (platform === 'trello') {
-    await setupTrelloWorkflow();
-  } else {
-    // Fallback to manual entry for other platforms
-    await setupManualWorkflow();
+  // Platform-specific terminology
+  const terms = {
+    trello: { item: 'cards', container: 'lists' },
+    jira: { item: 'issues', container: 'statuses' },
+    linear: { item: 'issues', container: 'states' },
+  };
+  const term = terms[platform as keyof typeof terms] || { item: 'tasks', container: 'columns' };
+
+  ui.dim(`Configure which ${term.container} Boatclaw should use.`);
+  ui.dim(`${term.item.charAt(0).toUpperCase() + term.item.slice(1)} will flow: Trigger → Working → Success/Failed`);
+  ui.blank();
+
+  switch (platform) {
+    case 'trello':
+      await setupTrelloWorkflow();
+      break;
+    case 'jira':
+      await setupJiraWorkflow();
+      break;
+    case 'linear':
+      await setupLinearWorkflow();
+      break;
+    default:
+      await setupManualWorkflow();
   }
 }
 
@@ -365,6 +572,284 @@ async function setupTrelloWorkflow(): Promise<void> {
     }
   } catch (error) {
     spinner.fail('Failed to fetch lists');
+    throw error;
+  }
+}
+
+async function setupJiraWorkflow(): Promise<void> {
+  // Warn about Jira workflow rules
+  ui.warning('Jira has workflow rules that may restrict status transitions.');
+  ui.dim('Make sure your workflow allows: Trigger → Working → Success/Failed');
+  ui.dim('If transitions fail, check your Jira workflow configuration.');
+  ui.blank();
+
+  const config = configManager.load();
+  const spinner = ui.spinner('Fetching statuses...').start();
+
+  try {
+    const provider = new JiraProvider({
+      instanceUrl: config.jira.instanceUrl,
+      email: config.jira.email,
+      apiToken: config.jira.apiToken,
+      projectKey: config.jira.projectKey,
+    });
+
+    const lists = await provider.getLists();
+    await provider.close();
+
+    spinner.succeed('Statuses fetched!');
+
+    if (lists.length === 0) {
+      ui.error('No statuses found. Configure workflow in Jira first.');
+      process.exit(1);
+    }
+
+    console.log();
+
+    const listChoices = lists.map((list) => ({
+      name: list.name,
+      value: list.id,
+    }));
+
+    const noneChoice = { name: '(none)', value: '' };
+
+    // Trigger status
+    const { triggerId } = await inquirer.prompt([
+      {
+        type: 'list',
+        name: 'triggerId',
+        message: 'Trigger status (issues to pick up):',
+        choices: listChoices,
+      },
+    ]);
+
+    // Working status
+    const { workingId } = await inquirer.prompt([
+      {
+        type: 'list',
+        name: 'workingId',
+        message: 'Working status (issues in progress):',
+        choices: listChoices.filter((c) => c.value !== triggerId),
+      },
+    ]);
+
+    // Success status
+    const { successId } = await inquirer.prompt([
+      {
+        type: 'list',
+        name: 'successId',
+        message: 'Success status (completed issues):',
+        choices: listChoices.filter(
+          (c) => c.value !== triggerId && c.value !== workingId
+        ),
+      },
+    ]);
+
+    // Review status (optional)
+    const remainingForReview = listChoices.filter(
+      (c) =>
+        c.value !== triggerId &&
+        c.value !== workingId &&
+        c.value !== successId
+    );
+
+    let reviewId = '';
+    if (remainingForReview.length > 0) {
+      const { reviewChoice } = await inquirer.prompt([
+        {
+          type: 'list',
+          name: 'reviewChoice',
+          message: 'Review status (optional):',
+          choices: [noneChoice, ...remainingForReview],
+        },
+      ]);
+      reviewId = reviewChoice;
+    }
+
+    // Failed status (optional)
+    const remainingForFailed = listChoices.filter(
+      (c) =>
+        c.value !== triggerId &&
+        c.value !== workingId &&
+        c.value !== successId &&
+        c.value !== reviewId
+    );
+
+    let failedId = '';
+    if (remainingForFailed.length > 0) {
+      const { failedChoice } = await inquirer.prompt([
+        {
+          type: 'list',
+          name: 'failedChoice',
+          message: 'Failed status (optional):',
+          choices: [noneChoice, ...remainingForFailed],
+        },
+      ]);
+      failedId = failedChoice;
+    }
+
+    const getListName = (id: string) =>
+      lists.find((l) => l.id === id)?.name || '';
+
+    // Save workflow config
+    configManager.set('workflow.triggerId', triggerId);
+    configManager.set('workflow.triggerName', getListName(triggerId));
+    configManager.set('workflow.workingId', workingId);
+    configManager.set('workflow.workingName', getListName(workingId));
+    configManager.set('workflow.reviewId', reviewId);
+    configManager.set('workflow.reviewName', reviewId ? getListName(reviewId) : '');
+    configManager.set('workflow.successId', successId);
+    configManager.set('workflow.successName', getListName(successId));
+    configManager.set('workflow.failedId', failedId);
+    configManager.set('workflow.failedName', failedId ? getListName(failedId) : '');
+
+    ui.success('Workflow configured!');
+
+    ui.blank();
+    const flowSteps = [getListName(triggerId), getListName(workingId)];
+    if (reviewId) flowSteps.push(getListName(reviewId));
+    flowSteps.push(getListName(successId));
+    ui.flow(flowSteps);
+    if (failedId) {
+      ui.dim(`Failed issues → ${getListName(failedId)}`);
+    }
+  } catch (error) {
+    spinner.fail('Failed to fetch statuses');
+    throw error;
+  }
+}
+
+async function setupLinearWorkflow(): Promise<void> {
+  const config = configManager.load();
+  const spinner = ui.spinner('Fetching workflow states...').start();
+
+  try {
+    const provider = new LinearProvider({
+      apiKey: config.linear.apiKey,
+      teamId: config.linear.teamId,
+    });
+
+    const lists = await provider.getLists();
+    await provider.close();
+
+    spinner.succeed('Workflow states fetched!');
+
+    if (lists.length === 0) {
+      ui.error('No workflow states found. Configure workflow in Linear first.');
+      process.exit(1);
+    }
+
+    console.log();
+
+    const listChoices = lists.map((list) => ({
+      name: list.name,
+      value: list.id,
+    }));
+
+    const noneChoice = { name: '(none)', value: '' };
+
+    // Trigger state
+    const { triggerId } = await inquirer.prompt([
+      {
+        type: 'list',
+        name: 'triggerId',
+        message: 'Trigger state (issues to pick up):',
+        choices: listChoices,
+      },
+    ]);
+
+    // Working state
+    const { workingId } = await inquirer.prompt([
+      {
+        type: 'list',
+        name: 'workingId',
+        message: 'Working state (issues in progress):',
+        choices: listChoices.filter((c) => c.value !== triggerId),
+      },
+    ]);
+
+    // Success state
+    const { successId } = await inquirer.prompt([
+      {
+        type: 'list',
+        name: 'successId',
+        message: 'Success state (completed issues):',
+        choices: listChoices.filter(
+          (c) => c.value !== triggerId && c.value !== workingId
+        ),
+      },
+    ]);
+
+    // Review state (optional)
+    const remainingForReview = listChoices.filter(
+      (c) =>
+        c.value !== triggerId &&
+        c.value !== workingId &&
+        c.value !== successId
+    );
+
+    let reviewId = '';
+    if (remainingForReview.length > 0) {
+      const { reviewChoice } = await inquirer.prompt([
+        {
+          type: 'list',
+          name: 'reviewChoice',
+          message: 'Review state (optional):',
+          choices: [noneChoice, ...remainingForReview],
+        },
+      ]);
+      reviewId = reviewChoice;
+    }
+
+    // Failed state (optional)
+    const remainingForFailed = listChoices.filter(
+      (c) =>
+        c.value !== triggerId &&
+        c.value !== workingId &&
+        c.value !== successId &&
+        c.value !== reviewId
+    );
+
+    let failedId = '';
+    if (remainingForFailed.length > 0) {
+      const { failedChoice } = await inquirer.prompt([
+        {
+          type: 'list',
+          name: 'failedChoice',
+          message: 'Failed state (optional):',
+          choices: [noneChoice, ...remainingForFailed],
+        },
+      ]);
+      failedId = failedChoice;
+    }
+
+    const getListName = (id: string) =>
+      lists.find((l) => l.id === id)?.name || '';
+
+    // Save workflow config
+    configManager.set('workflow.triggerId', triggerId);
+    configManager.set('workflow.triggerName', getListName(triggerId));
+    configManager.set('workflow.workingId', workingId);
+    configManager.set('workflow.workingName', getListName(workingId));
+    configManager.set('workflow.reviewId', reviewId);
+    configManager.set('workflow.reviewName', reviewId ? getListName(reviewId) : '');
+    configManager.set('workflow.successId', successId);
+    configManager.set('workflow.successName', getListName(successId));
+    configManager.set('workflow.failedId', failedId);
+    configManager.set('workflow.failedName', failedId ? getListName(failedId) : '');
+
+    ui.success('Workflow configured!');
+
+    ui.blank();
+    const flowSteps = [getListName(triggerId), getListName(workingId)];
+    if (reviewId) flowSteps.push(getListName(reviewId));
+    flowSteps.push(getListName(successId));
+    ui.flow(flowSteps);
+    if (failedId) {
+      ui.dim(`Failed issues → ${getListName(failedId)}`);
+    }
+  } catch (error) {
+    spinner.fail('Failed to fetch workflow states');
     throw error;
   }
 }
@@ -530,13 +1015,13 @@ async function setupInitialAgent(): Promise<void> {
   ui.dim('Agents are AI workers that pick up tasks from your board.');
   ui.blank();
 
-  // Fetch available labels from Trello
+  // Fetch available labels from platform
   const config = configManager.load();
   let availableLabels: Array<{ id: string; name: string; color: string }> = [];
 
-  if (config.platform === 'trello') {
-    const spinner = ui.spinner('Fetching labels...').start();
-    try {
+  const spinner = ui.spinner('Fetching labels...').start();
+  try {
+    if (config.platform === 'trello') {
       const provider = new TrelloProvider({
         apiKey: config.trello.apiKey,
         apiToken: config.trello.apiToken,
@@ -549,10 +1034,36 @@ async function setupInitialAgent(): Promise<void> {
         color: l.color || '',
       }));
       await provider.close();
-      spinner.succeed(`Found ${availableLabels.length} labels`);
-    } catch {
-      spinner.warn('Could not fetch labels');
+    } else if (config.platform === 'jira') {
+      const provider = new JiraProvider({
+        instanceUrl: config.jira.instanceUrl,
+        email: config.jira.email,
+        apiToken: config.jira.apiToken,
+        projectKey: config.jira.projectKey,
+      });
+      const labels = await provider.getLabels();
+      availableLabels = labels.map((l) => ({
+        id: l.id,
+        name: l.name,
+        color: l.color || '',
+      }));
+      await provider.close();
+    } else if (config.platform === 'linear') {
+      const provider = new LinearProvider({
+        apiKey: config.linear.apiKey,
+        teamId: config.linear.teamId,
+      });
+      const labels = await provider.getLabels();
+      availableLabels = labels.map((l) => ({
+        id: l.id,
+        name: l.name,
+        color: l.color || '',
+      }));
+      await provider.close();
     }
+    spinner.succeed(`Found ${availableLabels.length} labels`);
+  } catch {
+    spinner.warn('Could not fetch labels');
   }
 
   const { addAgent } = await inquirer.prompt([
@@ -634,7 +1145,7 @@ async function setupInitialAgent(): Promise<void> {
         name: 'providerChoice',
         message: 'AI provider for this agent:',
         choices: availableProviders.map((p) => ({
-          name: p === 'claude' ? 'Claude CLI' : 'Cursor CLI',
+          name: p === 'claude' ? 'Claude CLI' : p === 'cursor' ? 'Cursor CLI' : 'OpenAI Codex CLI',
           value: p,
         })),
       },
@@ -766,18 +1277,30 @@ async function setupAI(): Promise<void> {
   ui.header('STEP 3 · AI Provider');
 
   ui.dim('Select the AI CLI(s) you have installed.');
+  ui.dim('Use space to select, enter to confirm.');
   ui.blank();
 
   const { providers } = await inquirer.prompt([
     {
       type: 'checkbox',
       name: 'providers',
-      message: 'Which AI CLI(s) do you have installed?',
+      message: 'Select AI CLI(s) you have installed:',
       choices: [
-        { name: 'Claude CLI (claude)', value: 'claude', checked: true },
-        { name: 'Cursor CLI (cursor)', value: 'cursor' },
+        {
+          name: 'Claude Code (claude) - supports interactive mode',
+          value: 'claude',
+          checked: true,
+        },
+        {
+          name: 'Cursor CLI (cursor)',
+          value: 'cursor',
+        },
+        {
+          name: 'OpenAI Codex CLI (codex)',
+          value: 'codex',
+        },
       ],
-      validate: (input: string[]) => input.length > 0 || 'Select at least one provider',
+      validate: (input: string[]) => input.length > 0 || 'Select at least one provider (use space to select)',
     },
   ]);
 
@@ -786,6 +1309,32 @@ async function setupAI(): Promise<void> {
   configManager.set('ai.provider', defaultProvider);
   configManager.set('ai.availableProviders', providers);
   configManager.set('ai.defaultModel', 'auto');
+
+  // Ask about interactive mode if Claude is selected
+  let interactiveEnabled = false;
+  if (providers.includes('claude')) {
+    ui.blank();
+    ui.infoBox([
+      'Interactive Mode (Claude Code only)',
+      '',
+      'When enabled, AI can ask questions during task execution.',
+      'Questions are posted as comments on the ticket.',
+      'You reply with a comment, and AI continues working.',
+      '',
+      'This is useful for complex tasks that need clarification.',
+    ], { width: 60 });
+
+    const { enableInteractive } = await inquirer.prompt([
+      {
+        type: 'confirm',
+        name: 'enableInteractive',
+        message: 'Enable interactive mode? (AI can ask questions)',
+        default: true,
+      },
+    ]);
+    interactiveEnabled = enableInteractive;
+    configManager.set('ai.interactive', interactiveEnabled);
+  }
 
   // Set poll interval
   configManager.set('worker.pollInterval', 3); // 3 seconds
@@ -796,6 +1345,10 @@ async function setupAI(): Promise<void> {
   } else {
     ui.success(`AI provider configured: ${defaultProvider}`);
   }
+
+  if (interactiveEnabled) {
+    ui.success('Interactive mode enabled for Claude Code');
+  }
 }
 
 function showSummary(): void {
@@ -805,9 +1358,21 @@ function showSummary(): void {
   const agents = Object.keys(config.roles);
   const projects = Object.keys(config.projects);
 
+  // Get board/project/team name based on platform
+  let boardName = 'Not set';
+  if (config.platform === 'trello') {
+    boardName = config.trello?.boardName || config.trello?.boardId || 'Not set';
+  } else if (config.platform === 'jira') {
+    boardName = config.jira?.projectName || config.jira?.projectKey || 'Not set';
+  } else if (config.platform === 'linear') {
+    boardName = config.linear?.teamName || config.linear?.teamId || 'Not set';
+  }
+
+  const boardLabel = config.platform === 'jira' ? 'Project' : config.platform === 'linear' ? 'Team' : 'Board';
+
   ui.successBox('Setup Complete', [
     `Platform: ${config.platform || 'Not set'}`,
-    `Board: ${config.trello?.boardName || config.trello?.boardId || 'Not set'}`,
+    `${boardLabel}: ${boardName}`,
     `Projects: ${projects.length > 0 ? projects.join(', ') : 'None'}`,
     `Agents: ${agents.length > 0 ? agents.join(', ') : 'None'}`,
     `GitHub: ${config.github.enabled ? 'Enabled' : 'Disabled'}`,
@@ -826,9 +1391,13 @@ function showSummary(): void {
   ui.section('Workflow');
   ui.flow(flowSteps);
 
+  // Platform-specific terminology for next steps
+  const itemType = config.platform === 'trello' ? 'cards' : 'issues';
+  const containerType = config.platform === 'trello' ? 'list' : config.platform === 'jira' ? 'status' : 'state';
+
   // Next steps
   ui.nextSteps([
-    'Add cards to your trigger list with matching labels',
+    `Add ${itemType} to your trigger ${containerType} with matching labels`,
     `Run ${chalk.cyan('boatclaw start')} to begin processing`,
     `Run ${chalk.cyan('boatclaw status')} to check configuration`,
   ]);

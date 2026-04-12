@@ -4,6 +4,7 @@
 
 import inquirer from 'inquirer';
 import chalk from 'chalk';
+import * as readline from 'readline';
 import { readdirSync, statSync, existsSync } from 'fs';
 import { resolve, dirname, basename } from 'path';
 import { execSync } from 'child_process';
@@ -129,7 +130,6 @@ export async function inputMultilineText(options: {
   console.log(chalk.dim('─'.repeat(45)));
 
   return new Promise((resolve) => {
-    const readline = require('readline');
     const rl = readline.createInterface({
       input: process.stdin,
       output: process.stdout,

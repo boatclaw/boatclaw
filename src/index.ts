@@ -14,6 +14,7 @@ import { registerProjectsCommands } from './cli/commands/projects.js';
 import { registerContextCommands } from './cli/commands/context.js';
 import { registerGitHubCommands } from './cli/commands/github.js';
 import { registerLogsCommands } from './cli/commands/logs.js';
+import { registerResetCommand } from './cli/commands/reset.js';
 
 const VERSION = '0.1.0';
 
@@ -34,6 +35,7 @@ registerAgentsCommands(program);
 registerContextCommands(program);
 registerGitHubCommands(program);
 registerLogsCommands(program);
+registerResetCommand(program);
 
 // Default action (no command provided)
 program.action(() => {

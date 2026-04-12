@@ -271,6 +271,12 @@ export function registerStatusCommands(program: Command): void {
           ui.success('GitHub PR creation enabled');
         }
 
+        // Check interactive mode (only Claude supports this)
+        const interactiveEnabled = config.ai.interactive && config.ai.provider === 'claude';
+        if (interactiveEnabled) {
+          ui.success('Interactive mode enabled (AI can ask questions)');
+        }
+
         // Show projects
         const projects = Object.values(config.projects);
         if (projects.length > 0) {
@@ -283,6 +289,7 @@ export function registerStatusCommands(program: Command): void {
           dryRun: options.dryRun,
           createPRs: githubEnabled,
           githubToken: config.github.token,
+          interactive: interactiveEnabled,
         });
 
         // Create worker with AI task processor
