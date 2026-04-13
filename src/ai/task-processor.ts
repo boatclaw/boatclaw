@@ -55,6 +55,8 @@ export interface TaskProcessorOptions {
   githubToken?: string;
   /** Enable interactive mode (ask_human) - only works with Claude */
   interactive?: boolean;
+  /** Called after each project completes in multi-project tasks */
+  onProjectComplete?: (result: ProjectProcessingResult) => void;
 }
 
 /**
@@ -147,6 +149,7 @@ export class TaskProcessor {
     options?: {
       additionalInstructions?: string;
       dryRun?: boolean;
+      onProjectComplete?: (result: ProjectProcessingResult) => void;
     }
   ): Promise<TaskProcessingResult> {
     const startTime = Date.now();
@@ -173,6 +176,11 @@ export class TaskProcessor {
 
       projectResults.push(projectResult);
       outputs.push(`## ${project.name}\n${projectResult.output}`);
+
+      // Notify caller after each project completes
+      if (options?.onProjectComplete) {
+        options.onProjectComplete(projectResult);
+      }
 
       if (projectResult.success) {
         hasAnySuccess = true;
@@ -405,7 +413,8 @@ export function createTaskProcessorFunction(
 ): (
   card: Card,
   role: RoleConfig,
-  projects: ProjectConfig[]
+  projects: ProjectConfig[],
+  onProjectComplete?: (result: { projectName: string; success: boolean; error?: string; prUrl?: string; prNumber?: number; output?: string }) => void,
 ) => Promise<{
   success: boolean;
   output: string;
@@ -414,9 +423,10 @@ export function createTaskProcessorFunction(
 }> {
   const processor = new TaskProcessor(options);
 
-  return async (card, role, projects) => {
+  return async (card, role, projects, onProjectComplete) => {
     const result = await processor.processMultiProject(card, role, projects, {
       dryRun: options?.dryRun,
+      onProjectComplete: onProjectComplete || options?.onProjectComplete,
     });
 
     return {
