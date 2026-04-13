@@ -1303,32 +1303,6 @@ async function setupAI(): Promise<void> {
   configManager.set('ai.availableProviders', providers);
   configManager.set('ai.defaultModel', 'auto');
 
-  // Ask about interactive mode if Claude is selected
-  let interactiveEnabled = false;
-  if (providers.includes('claude')) {
-    ui.blank();
-    ui.infoBox([
-      'Interactive Mode (Claude Code only)',
-      '',
-      'When enabled, AI can ask questions during task execution.',
-      'Questions are posted as comments on the ticket.',
-      'You reply with a comment, and AI continues working.',
-      '',
-      'This is useful for complex tasks that need clarification.',
-    ], { width: 60 });
-
-    const { enableInteractive } = await inquirer.prompt([
-      {
-        type: 'confirm',
-        name: 'enableInteractive',
-        message: 'Enable interactive mode? (AI can ask questions)',
-        default: true,
-      },
-    ]);
-    interactiveEnabled = enableInteractive;
-    configManager.set('ai.interactive', interactiveEnabled);
-  }
-
   // Set poll interval
   configManager.set('worker.pollInterval', 3); // 3 seconds
 
@@ -1339,8 +1313,8 @@ async function setupAI(): Promise<void> {
     ui.success(`AI provider configured: ${defaultProvider}`);
   }
 
-  if (interactiveEnabled) {
-    ui.success('Interactive mode enabled for Claude Code');
+  if (providers.includes('claude')) {
+    ui.dim('Tip: Use --interactive flag with "boatclaw start" to let AI ask questions via ticket comments.');
   }
 }
 

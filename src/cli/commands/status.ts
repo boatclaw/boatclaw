@@ -9,8 +9,9 @@
 
 import { Command } from 'commander';
 import chalk from 'chalk';
+import { existsSync, writeFileSync, readFileSync, unlinkSync } from 'fs';
 import { configManager } from '../../core/config.js';
-import { isInitialized, BOATCLAW_DIR } from '../../core/paths.js';
+import { isInitialized, BOATCLAW_DIR, LOCK_FILE } from '../../core/paths.js';
 import { createBoardProvider, verifyPlatformConfig, verifyWorkflowConfig } from '../../platforms/factory.js';
 import { Worker, createWorker, TaskResult } from '../../core/worker.js';
 import { Card } from '../../platforms/types.js';
@@ -184,7 +185,8 @@ export function registerStatusCommands(program: Command): void {
     .command('start')
     .description('Start the Boatclaw worker')
     .option('--dry-run', 'Run without making changes')
-    .action(async (options: { dryRun?: boolean }) => {
+    .option('--interactive', 'Enable interactive mode - AI can ask questions via ticket comments (Claude Code only)')
+    .action(async (options: { dryRun?: boolean; interactive?: boolean }) => {
       if (!isInitialized()) {
         ui.error('Boatclaw is not configured.');
         ui.info(`Run ${chalk.cyan('boatclaw setup')} first.`);
@@ -220,6 +222,40 @@ export function registerStatusCommands(program: Command): void {
       }
 
       ui.showLogo();
+
+      // Check for existing worker
+      if (existsSync(LOCK_FILE)) {
+        try {
+          const lockData = readFileSync(LOCK_FILE, 'utf-8').trim();
+          const pid = parseInt(lockData, 10);
+          // Check if process is still running
+          try {
+            process.kill(pid, 0); // signal 0 = just check if process exists
+            ui.error(`Another boatclaw worker is already running (PID ${pid})`);
+            ui.info('Run "boatclaw stop" to stop it first.');
+            process.exit(1);
+          } catch {
+            // Process not running — stale lock file, clean it up
+            unlinkSync(LOCK_FILE);
+          }
+        } catch {
+          // Can't read lock file — remove it
+          try { unlinkSync(LOCK_FILE); } catch { /* ignore */ }
+        }
+      }
+
+      // Write lock file
+      writeFileSync(LOCK_FILE, String(process.pid));
+
+      // Resolve interactive mode from flag
+      let interactiveEnabled = false;
+      if (options.interactive) {
+        if (config.ai.provider !== 'claude') {
+          ui.warning('Interactive mode is only supported with Claude Code. Continuing without it.');
+        } else {
+          interactiveEnabled = true;
+        }
+      }
 
       if (options.dryRun) {
         ui.warning('Dry run mode - no changes will be made');
@@ -262,19 +298,31 @@ export function registerStatusCommands(program: Command): void {
         ui.keyValue('Agents', agents.map((a) => a.name).join(', '));
         console.log();
 
-        // Check GitHub configuration
-        const githubEnabled = !!(config.github.enabled &&
+        // Check GitHub configuration and validate token
+        let githubEnabled = !!(config.github.enabled &&
                                  config.github.token &&
                                  config.github.createPrs);
 
         if (githubEnabled) {
-          ui.success('GitHub PR creation enabled');
+          // Validate token by making a test API call
+          try {
+            const { GitHubClient } = await import('../../github/client.js');
+            const testClient = new GitHubClient({
+              token: config.github.token,
+              defaultRepo: config.github.defaultRepo,
+            });
+            const valid = await testClient.verifyConnection();
+            if (!valid) throw new Error('Invalid token');
+            ui.success('GitHub PR creation enabled');
+          } catch {
+            ui.warning('GitHub token is invalid or expired. Continuing without GitHub PR creation.');
+            ui.dim('  Run "boatclaw github setup" to reconfigure.');
+            githubEnabled = false;
+          }
         }
 
-        // Check interactive mode (only Claude supports this)
-        const interactiveEnabled = config.ai.interactive && config.ai.provider === 'claude';
         if (interactiveEnabled) {
-          ui.success('Interactive mode enabled (AI can ask questions)');
+          console.log(chalk.bold.magenta('  \uD83D\uDD25 Interactive mode ON') + chalk.dim(' — AI can ask questions via ticket comments'));
         }
 
         // Show projects
@@ -298,6 +346,8 @@ export function registerStatusCommands(program: Command): void {
           pollIntervalMs: (config.worker.pollInterval || 3) * 1000,
           maxParallelTasks: config.worker.maxParallelTasks || 10,
           taskProcessor,
+          githubToken: githubEnabled ? config.github.token : undefined,
+          githubEnabled,
         });
 
         // Set up event handlers
@@ -315,6 +365,9 @@ export function registerStatusCommands(program: Command): void {
 
           await worker.stop();
           await provider.close();
+
+          // Remove lock file
+          try { unlinkSync(LOCK_FILE); } catch { /* ignore */ }
 
           ui.success('Worker stopped');
           process.exit(0);
@@ -337,16 +390,64 @@ export function registerStatusCommands(program: Command): void {
         if (error instanceof Error) {
           ui.error(error.message);
         }
+        // Clean up lock file on crash
+        try { unlinkSync(LOCK_FILE); } catch { /* ignore */ }
         process.exit(1);
       }
     });
 
-  // Stop command (for future daemon support)
+  // Stop command
   program
     .command('stop')
-    .description('Stop the Boatclaw worker')
+    .description('Stop the running Boatclaw worker')
     .action(async () => {
-      ui.info('Worker runs in foreground. Press Ctrl+C to stop.');
+      if (!existsSync(LOCK_FILE)) {
+        ui.info('No worker is running.');
+        return;
+      }
+
+      try {
+        const lockData = readFileSync(LOCK_FILE, 'utf-8').trim();
+        const pid = parseInt(lockData, 10);
+
+        // Check if process is actually running
+        try {
+          process.kill(pid, 0);
+        } catch {
+          ui.info('Worker is not running (stale lock file). Cleaning up.');
+          unlinkSync(LOCK_FILE);
+          return;
+        }
+
+        // Send SIGTERM to stop gracefully
+        ui.info(`Stopping worker (PID ${pid})...`);
+        process.kill(pid, 'SIGTERM');
+
+        // Wait for it to stop (up to 10 seconds)
+        let stopped = false;
+        for (let i = 0; i < 20; i++) {
+          await new Promise(r => setTimeout(r, 500));
+          try {
+            process.kill(pid, 0);
+          } catch {
+            stopped = true;
+            break;
+          }
+        }
+
+        if (stopped) {
+          // Clean up lock file if still there
+          try { unlinkSync(LOCK_FILE); } catch { /* ignore */ }
+          ui.success('Worker stopped.');
+        } else {
+          ui.warning('Worker did not stop gracefully. Force killing...');
+          process.kill(pid, 'SIGKILL');
+          try { unlinkSync(LOCK_FILE); } catch { /* ignore */ }
+          ui.success('Worker killed.');
+        }
+      } catch (error) {
+        ui.error('Failed to stop worker: ' + (error instanceof Error ? error.message : String(error)));
+      }
     });
 }
 
