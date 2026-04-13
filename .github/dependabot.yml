@@ -3,10 +3,14 @@ updates:
   - package-ecosystem: npm
     directory: /
     schedule:
-      interval: weekly
-    open-pull-requests-limit: 10
+      interval: monthly
+    open-pull-requests-limit: 5
     labels:
       - dependencies
+    groups:
+      all-dependencies:
+        patterns:
+          - "*"
 
   - package-ecosystem: github-actions
     directory: /
