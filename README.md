@@ -154,6 +154,31 @@ roles:
     model: opus
 ```
 
+## Vision
+
+AI is getting good at writing code. What's missing is the automation around it — the glue between "here's what I want" and "here's your pull request."
+
+Boatclaw is built on a simple belief: developers should focus on thinking, not typing. Describe what you want on your board, and AI agents handle the implementation. Today that means reviewing PRs. Tomorrow it means trusting the full pipeline — from idea to production.
+
+We're working toward a world where one person with good ideas and clear thinking can do the work of an entire team. Not by working harder, but by letting AI handle the repetitive parts of building software.
+
+## Roadmap
+
+What we're working on next:
+
+- [ ] Test suite — unit and integration tests for reliability
+- [ ] Smarter context handling — auto-detect tech stack, read existing code patterns
+- [ ] Webhook mode — real-time triggers instead of polling
+- [ ] More AI providers — Gemini, GitHub Copilot
+- [ ] More platforms — GitLab, Bitbucket, Asana, GitHub Projects
+- [ ] Auto-review — AI reviews its own PRs before requesting human review
+- [ ] Notifications — Slack, Discord, email updates on task progress
+- [ ] Auto-merge — configurable trust levels for automatic merging
+- [ ] Dashboard — web UI for monitoring agents and task history
+- [ ] Multi-agent collaboration — agents that review each other's work
+
+Have ideas? [Open an issue](https://github.com/boatclaw/boatclaw/issues).
+
 ## Development
 
 ```bash
