@@ -13,7 +13,7 @@ import { EventEmitter } from 'events';
 import { BoardProvider, Card } from '../platforms/types.js';
 import { configManager, RoleConfig, WorkflowConfig, ProjectConfig } from './config.js';
 import { workerLogger as log } from './logger.js';
-import { ReviewerAgent, createReviewerAgent } from '../github/reviewer.js';
+import { createReviewerAgent } from '../github/reviewer.js';
 import { GitHubClient } from '../github/client.js';
 import { createAIProvider } from '../ai/index.js';
 

@@ -253,7 +253,7 @@ Please address the issues and update the PR.
       // Get diff against base branch — catches both committed and uncommitted changes
       let diff = '';
       // Validate baseBranch to prevent command injection
-      const safeBranch = /^[a-zA-Z0-9._\/-]+$/.test(baseBranch) ? baseBranch : 'main';
+      const safeBranch = /^[a-zA-Z0-9._/-]+$/.test(baseBranch) ? baseBranch : 'main';
       try {
         // First try diffing against the base branch (catches committed changes)
         diff = execSync(`git diff ${safeBranch}...HEAD`, { cwd: projectPath, encoding: 'utf-8', maxBuffer: 10 * 1024 * 1024 });
