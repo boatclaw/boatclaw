@@ -232,7 +232,8 @@ async function addProject(options: {
   }]);
 
   if (addContext) {
-    context = await inputContextInline('Enter project context (tech stack, structure, conventions):');
+    showProjectContextHints();
+    context = await inputContextInline('Enter project context:');
   }
 
   // Auto-detect base branch
@@ -444,7 +445,8 @@ async function editProjectContext(name: string): Promise<void> {
     }]);
 
     if (wantAdd) {
-      const newText = await inputContextInline('Enter project context (tech stack, structure, conventions):');
+      showProjectContextHints();
+      const newText = await inputContextInline('Enter project context:');
       if (newText) {
         project.context = newText;
         configManager.setProject(name, project);
@@ -452,6 +454,23 @@ async function editProjectContext(name: string): Promise<void> {
       }
     }
   }
+}
+
+function showProjectContextHints(): void {
+  console.log();
+  console.log(chalk.dim('  Hint: Good project context includes:'));
+  console.log(chalk.dim('  - Tech stack (e.g., Node.js, TypeScript, React, PostgreSQL)'));
+  console.log(chalk.dim('  - Framework and libraries (e.g., Express, Prisma, Jest)'));
+  console.log(chalk.dim('  - Project structure (e.g., src/routes, src/services, src/models)'));
+  console.log(chalk.dim('  - Coding conventions (e.g., async/await, no classes, functional style)'));
+  console.log(chalk.dim('  - Important constraints (e.g., must support Node 18, no external APIs)'));
+  console.log();
+  console.log(chalk.dim('  Example:'));
+  console.log(chalk.dim('  Node.js 20 + TypeScript + Express API'));
+  console.log(chalk.dim('  PostgreSQL with Prisma ORM'));
+  console.log(chalk.dim('  Jest for testing, async/await only'));
+  console.log(chalk.dim('  src/routes for endpoints, src/services for business logic'));
+  console.log();
 }
 
 /**
