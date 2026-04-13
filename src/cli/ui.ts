@@ -15,7 +15,6 @@ import ora, { Ora } from 'ora';
 // ==================== Brand ====================
 
 const BRAND = 'BOATCLAW';
-const WEBSITE = 'boatclaw.dev';
 const TAGLINE = 'AI Task Automation';
 
 export function showLogo(): void {

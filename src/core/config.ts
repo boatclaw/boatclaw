@@ -68,6 +68,7 @@ export const ProjectConfigSchema = z.object({
   path: z.string(),                              // Local path to the repo
   github: z.string().optional(),                 // GitHub repo "owner/repo" for PRs
   context: z.string().optional(),                // Project context stored directly in config
+  contextFile: z.string().optional(),            // Path to context file (e.g., CONTEXT.md)
   baseBranch: z.string().default('main'),        // Base branch for PRs
   branchPrefix: z.string().default('feature/'),  // Branch prefix for PRs
 });
@@ -83,6 +84,7 @@ export const RoleConfigSchema = z.object({
   labels: z.array(z.string()),                   // Labels this agent handles (e.g., ["backend", "api"])
   projects: z.array(z.string()).default(['*']),  // Projects this agent can work on ("*" = all)
   context: z.string().optional(),                // Agent context stored directly in config
+  contextFile: z.string().optional(),            // Path to context file for this role
   provider: AIProviderSchema.optional(),         // AI provider (claude/cursor) - uses global default if not set
   model: ModelSchema.default('auto'),
   enabled: z.boolean().default(true),

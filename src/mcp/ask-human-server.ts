@@ -17,7 +17,7 @@ import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
-import { BoardProvider, Comment } from '../platforms/types.js';
+import { BoardProvider } from '../platforms/types.js';
 
 /**
  * Question posted to the board.

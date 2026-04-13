@@ -6,7 +6,7 @@ import inquirer from 'inquirer';
 import chalk from 'chalk';
 import * as readline from 'readline';
 import { readdirSync, statSync, existsSync } from 'fs';
-import { resolve, dirname, basename } from 'path';
+import { resolve, dirname } from 'path';
 import { execSync } from 'child_process';
 
 /**
@@ -24,6 +24,7 @@ export async function selectPath(options: {
 }): Promise<string> {
   let currentPath = options.startPath || process.cwd();
 
+  // eslint-disable-next-line no-constant-condition
   while (true) {
     const entries = getDirectoryEntries(currentPath, options.onlyDirectories ?? true);
 
@@ -185,7 +186,7 @@ export function detectGitHubRepo(repoPath: string): string | null {
     // - git@github.com:owner/repo.git
     // - https://github.com/owner/repo
 
-    let match = remoteUrl.match(/github\.com[/:]([\w-]+)\/([\w.-]+?)(\.git)?$/);
+    const match = remoteUrl.match(/github\.com[/:]([\w-]+)\/([\w.-]+?)(\.git)?$/);
     if (match) {
       return `${match[1]}/${match[2]}`;
     }

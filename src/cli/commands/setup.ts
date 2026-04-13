@@ -142,13 +142,6 @@ async function setupTrello(): Promise<void> {
   // Verify credentials
   const spinner = ui.spinner('Verifying credentials...').start();
 
-  // Create a temporary provider to fetch boards
-  const tempProvider = new TrelloProvider({
-    apiKey: credentials.apiKey,
-    apiToken: credentials.apiToken,
-    boardId: 'me', // Will be replaced
-  });
-
   try {
     // Fetch user's boards
     const axios = await import('axios');

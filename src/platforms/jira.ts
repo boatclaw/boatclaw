@@ -44,10 +44,6 @@ interface JiraIssueType {
   subtask: boolean;
 }
 
-interface JiraLabel {
-  name: string;
-}
-
 interface JiraUser {
   accountId: string;
   displayName: string;

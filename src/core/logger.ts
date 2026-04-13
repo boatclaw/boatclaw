@@ -6,7 +6,7 @@
  */
 
 import pino from 'pino';
-import { existsSync, mkdirSync, readdirSync, readFileSync, unlinkSync } from 'fs';
+import { existsSync, readdirSync, readFileSync, unlinkSync } from 'fs';
 import { join } from 'path';
 import { LOG_DIR, ensureDirs } from './paths.js';
 
