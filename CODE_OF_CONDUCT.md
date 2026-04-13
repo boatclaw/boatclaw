@@ -18,7 +18,7 @@ We are committed to providing a friendly, safe, and welcoming environment for al
 
 ## Enforcement
 
-Instances of unacceptable behavior may be reported to the project maintainers. All complaints will be reviewed and investigated.
+Instances of unacceptable behavior may be reported by emailing **isializada@gmail.com**. All complaints will be reviewed and investigated.
 
 ## Attribution
 

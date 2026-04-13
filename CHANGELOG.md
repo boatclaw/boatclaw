@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.2] - 2024-04-12
+
+### Fixed
+- npm publish with updated token configuration
+
+## [0.1.1] - 2024-04-12
+
+### Fixed
+- Use PAT for release workflow pushes to avoid permission issues
+
 ## [0.1.0] - 2024-04-12
 
 ### Added

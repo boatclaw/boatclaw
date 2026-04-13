@@ -168,11 +168,11 @@ npm link
 
 Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
+## Security
+
+To report a vulnerability, please see [SECURITY.md](SECURITY.md).
+
 ## License
 
-MIT
-
----
-
-Built with Claude Code
+[MIT](LICENSE)
 

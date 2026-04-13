@@ -7,14 +7,18 @@ Thanks for your interest in contributing!
 1. Fork the repository
 2. Clone your fork:
    ```bash
-   git clone https://github.com/YOUR_USERNAME/boatclaw.git
+   git clone https://github.com/<your-username>/boatclaw.git
    cd boatclaw
    ```
-3. Install dependencies:
+3. Add the upstream remote:
+   ```bash
+   git remote add upstream https://github.com/boatclaw/boatclaw.git
+   ```
+4. Install dependencies:
    ```bash
    npm install
    ```
-4. Create a branch:
+5. Create a branch:
    ```bash
    git checkout -b feature/your-feature
    ```
@@ -63,6 +67,14 @@ Use conventional commits:
 - Clear function/variable names
 - Comments for complex logic only
 
+## Reporting Bugs
+
+Found a bug? [Open an issue](https://github.com/boatclaw/boatclaw/issues/new?template=bug_report.md) with steps to reproduce.
+
+## Code of Conduct
+
+This project follows a [Code of Conduct](CODE_OF_CONDUCT.md). By participating, you agree to uphold it.
+
 ## Questions?
 
-Open an issue or start a discussion.
+Open an [issue](https://github.com/boatclaw/boatclaw/issues) or start a discussion.
