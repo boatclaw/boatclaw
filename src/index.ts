@@ -22,8 +22,11 @@ import { dirname, join } from 'path';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
-const pkg = JSON.parse(readFileSync(join(__dirname, '..', 'package.json'), 'utf-8'));
-const VERSION = pkg.version;
+let VERSION = '0.0.0';
+try {
+  const pkg = JSON.parse(readFileSync(join(__dirname, '..', 'package.json'), 'utf-8'));
+  VERSION = pkg.version;
+} catch { /* fallback version if package.json is missing */ }
 
 // Create the main program
 const program = new Command();
