@@ -339,7 +339,8 @@ async function addAgent(): Promise<void> {
 
   let context: string | undefined;
   if (addContext) {
-    context = await inputContextInline('Enter agent context (coding style, preferences):');
+    showAgentContextHints();
+    context = await inputContextInline('Enter agent context:');
   }
 
   const agent: RoleConfig = {
@@ -446,7 +447,8 @@ async function editAgentContext(name: string): Promise<void> {
     }]);
 
     if (wantAdd) {
-      const newText = await inputContextInline('Enter agent context (coding style, preferences):');
+      showAgentContextHints();
+      const newText = await inputContextInline('Enter agent context:');
       if (newText) {
         agent.context = newText;
         configManager.setRole(name, agent);
@@ -454,6 +456,24 @@ async function editAgentContext(name: string): Promise<void> {
       }
     }
   }
+}
+
+function showAgentContextHints(): void {
+  console.log();
+  console.log(chalk.dim('  Hint: Good agent context includes:'));
+  console.log(chalk.dim('  - Role and expertise (e.g., senior backend engineer)'));
+  console.log(chalk.dim('  - Coding style (e.g., write tests first, use functional patterns)'));
+  console.log(chalk.dim('  - Quality standards (e.g., always add error handling, write JSDoc)'));
+  console.log(chalk.dim('  - What to avoid (e.g., no console.log, no any types)'));
+  console.log(chalk.dim('  - Review expectations (e.g., keep PRs small, explain decisions)'));
+  console.log();
+  console.log(chalk.dim('  Example:'));
+  console.log(chalk.dim('  Senior backend engineer'));
+  console.log(chalk.dim('  Write unit tests for all new functions'));
+  console.log(chalk.dim('  Use TypeScript strict mode, no any types'));
+  console.log(chalk.dim('  Follow existing patterns in the codebase'));
+  console.log(chalk.dim('  Keep changes minimal and focused'));
+  console.log();
 }
 
 /**

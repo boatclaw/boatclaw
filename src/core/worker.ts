@@ -13,6 +13,9 @@ import { EventEmitter } from 'events';
 import { BoardProvider, Card } from '../platforms/types.js';
 import { configManager, RoleConfig, WorkflowConfig, ProjectConfig } from './config.js';
 import { workerLogger as log } from './logger.js';
+import { createReviewerAgent } from '../github/reviewer.js';
+import { GitHubClient } from '../github/client.js';
+import { createAIProvider } from '../ai/index.js';
 
 /**
  * Worker state.
@@ -59,6 +62,18 @@ export interface WorkerEvents {
 }
 
 /**
+ * Single project processing result from task processor.
+ */
+export interface ProjectProcessingNotification {
+  projectName: string;
+  success: boolean;
+  error?: string;
+  prUrl?: string;
+  prNumber?: number;
+  output?: string;
+}
+
+/**
  * Task processor function type.
  * Implemented in AI engine with optional GitHub PR creation.
  * Now supports multi-project processing.
@@ -66,7 +81,8 @@ export interface WorkerEvents {
 export type TaskProcessor = (
   card: Card,
   role: RoleConfig,
-  projects: ProjectConfig[]
+  projects: ProjectConfig[],
+  onProjectComplete?: (result: ProjectProcessingNotification) => void,
 ) => Promise<{
   success: boolean;
   output: string;
@@ -83,6 +99,10 @@ export interface WorkerOptions {
   maxParallelTasks?: number;
   dryRun?: boolean;
   taskProcessor?: TaskProcessor;
+  /** GitHub token for review integration */
+  githubToken?: string;
+  /** Whether GitHub is enabled and working */
+  githubEnabled?: boolean;
 }
 
 /**
@@ -113,19 +133,24 @@ export class Worker extends EventEmitter {
   private maxParallelTasks: number;
   private dryRun: boolean;
   private taskProcessor: TaskProcessor;
+  private githubToken?: string;
+  private githubEnabled: boolean;
 
   private state: WorkerState = 'idle';
   private pollTimer: NodeJS.Timeout | null = null;
   private processingCards: Set<string> = new Set();
+  private reviewingCards: Set<string> = new Set();
   private shouldStop: boolean = false;
 
   constructor(options: WorkerOptions) {
     super();
     this.provider = options.provider;
-    this.pollIntervalMs = options.pollIntervalMs ?? 3000; // Default 3 seconds
-    this.maxParallelTasks = options.maxParallelTasks ?? 10; // Default 10 parallel tasks
+    this.pollIntervalMs = options.pollIntervalMs ?? 3000;
+    this.maxParallelTasks = options.maxParallelTasks ?? 10;
     this.dryRun = options.dryRun ?? false;
     this.taskProcessor = options.taskProcessor ?? defaultTaskProcessor;
+    this.githubToken = options.githubToken;
+    this.githubEnabled = options.githubEnabled ?? false;
   }
 
   /**
@@ -185,8 +210,8 @@ export class Worker extends EventEmitter {
       this.pollTimer = null;
     }
 
-    // Wait for in-progress tasks to complete
-    while (this.processingCards.size > 0) {
+    // Wait for in-progress tasks and reviews to complete
+    while (this.processingCards.size > 0 || this.reviewingCards.size > 0) {
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
 
@@ -206,7 +231,7 @@ export class Worker extends EventEmitter {
       const cards = await this.fetchTriggerCards();
       this.emit('poll', cards.length);
 
-      // Process cards
+      // Process cards from trigger list
       for (const { card, role, projects } of cards) {
         if (this.shouldStop) {
           break;
@@ -219,12 +244,16 @@ export class Worker extends EventEmitter {
 
         // Check parallel task limit
         if (this.processingCards.size >= this.maxParallelTasks) {
-          // Wait for current tasks to complete
           break;
         }
 
         // Process task
         this.processTask(card, role, projects);
+      }
+
+      // Also check review list for cards that need automated review
+      if (!this.shouldStop) {
+        await this.pollReviewList();
       }
     } catch (error) {
       this.emit('error', error instanceof Error ? error : new Error(String(error)));
@@ -351,8 +380,20 @@ export class Worker extends EventEmitter {
         );
       }
 
-      // Execute task across all projects
-      const processingResult = await this.taskProcessor(card, role, projects);
+      // Execute task across all projects, posting per-project updates
+      const processingResult = await this.taskProcessor(card, role, projects, (projectResult) => {
+        if (!this.dryRun && projects.length > 1) {
+          const status = projectResult.success ? '✅' : '❌';
+          let msg = `${status} **${projectResult.projectName}** — ${projectResult.success ? 'completed' : 'failed'}`;
+          if (projectResult.prUrl) {
+            msg += ` — [PR #${projectResult.prNumber}](${projectResult.prUrl})`;
+          }
+          if (projectResult.error) {
+            msg += `\n> ${projectResult.error}`;
+          }
+          this.provider.addComment(card.id, msg).catch(() => {});
+        }
+      });
 
       // Collect all PR URLs
       const prUrls = processingResult.projectResults
@@ -456,28 +497,48 @@ export class Worker extends EventEmitter {
       return;
     }
 
-    // Build success comment
-    let comment = `✅ **Task completed successfully**\n\n${output.slice(0, 800)}`;
+    // Build success comment with clear summary
+    const parts: string[] = ['✅ **Task completed successfully**'];
 
-    // Add all PR links if created (multi-project support)
+    // Add AI output summary
+    if (output) {
+      parts.push(`**Summary:**\n${output.slice(0, 800)}`);
+    }
+
+    // Add per-project details
     if (projectResults && projectResults.length > 0) {
+      const projectDetails = projectResults
+        .map(r => {
+          let line = `- **${r.projectName}:** ✅ Done`;
+          if (r.prUrl) {
+            line += ` — [PR #${r.prNumber}](${r.prUrl})`;
+          } else {
+            line += ' — changes applied locally (no GitHub PR)';
+          }
+          return line;
+        })
+        .join('\n');
+      parts.push(`**Projects:**\n${projectDetails}`);
+
+      // Separate PR links section for easy scanning
       const prLinks = projectResults
         .filter(r => r.prUrl)
         .map(r => `- **${r.projectName}:** ${r.prUrl}`)
         .join('\n');
-
       if (prLinks) {
-        comment += `\n\n🔗 **Pull Requests:**\n${prLinks}`;
+        parts.push(`🔗 **Pull Requests:**\n${prLinks}`);
       }
     } else if (prUrl) {
-      comment += `\n\n🔗 **Pull Request:** ${prUrl}`;
+      parts.push(`🔗 **Pull Request:** ${prUrl}`);
     }
 
-    await this.provider.addComment(card.id, comment);
+    // Add role info
+    parts.push(`_Processed by agent **${role.name}**_`);
 
-    // Move to review list if any PR was created and review list is configured
-    const hasPRs = projectResults?.some(r => r.prUrl) || !!prUrl;
-    if (hasPRs && workflow.reviewId) {
+    await this.provider.addComment(card.id, parts.join('\n\n'));
+
+    // Always move to review list first if configured — reviewer will move to success/failed
+    if (workflow.reviewId) {
       await this.provider.moveCard(card.id, workflow.reviewId);
     } else if (workflow.successId) {
       await this.provider.moveCard(card.id, workflow.successId);
@@ -498,22 +559,152 @@ export class Worker extends EventEmitter {
       return;
     }
 
-    // Build failure comment with per-project details
-    let comment = `❌ **Task failed**\n\n**Error:** ${error.slice(0, 500)}`;
+    // Build failure comment with clear details
+    const parts: string[] = ['❌ **Task failed**', `**Error:** ${error.slice(0, 500)}`];
 
     if (projectResults && projectResults.length > 0) {
       const projectDetails = projectResults
-        .map(r => `- **${r.projectName}:** ${r.success ? '✅ Success' : '❌ Failed'}${r.error ? ` - ${r.error}` : ''}${r.prUrl ? ` (PR: ${r.prUrl})` : ''}`)
+        .map(r => {
+          let line = `- **${r.projectName}:** ${r.success ? '✅ Done' : '❌ Failed'}`;
+          if (r.error) line += ` — ${r.error}`;
+          if (r.prUrl) line += ` — [PR #${r.prNumber}](${r.prUrl})`;
+          return line;
+        })
         .join('\n');
-      comment += `\n\n**Project Results:**\n${projectDetails}`;
+      parts.push(`**Project Results:**\n${projectDetails}`);
     }
 
-    await this.provider.addComment(card.id, comment);
+    parts.push(`_Processed by agent **${role.name}**_`);
+
+    await this.provider.addComment(card.id, parts.join('\n\n'));
 
     // Move to failed list if configured, otherwise back to trigger
     const targetList = workflow.failedId || workflow.triggerId;
     if (targetList) {
       await this.provider.moveCard(card.id, targetList);
+    }
+  }
+
+  /**
+   * Poll review list for cards that need automated review.
+   * Cards with matching agent labels in the review list get auto-reviewed.
+   * Works with and without GitHub.
+   */
+  private async pollReviewList(): Promise<void> {
+    const config = configManager.load();
+    const workflow = config.workflow;
+
+    if (!workflow.reviewId) {
+      return;
+    }
+
+    try {
+      const cards = await this.provider.getCards({ listId: workflow.reviewId });
+
+      for (const card of cards) {
+        if (this.shouldStop) break;
+        if (this.reviewingCards.has(card.id)) continue;
+
+        // Only review cards that have a matching agent label
+        const cardLabels = card.labels.map(l => l.name.toLowerCase());
+        const matchingRole = configManager.findRoleForLabels(cardLabels);
+        if (!matchingRole) continue;
+
+        // Start review
+        this.reviewCard(card, matchingRole, workflow, config);
+      }
+    } catch (error) {
+      log.debug('Review list poll error', { error: error instanceof Error ? error.message : String(error) });
+    }
+  }
+
+  /**
+   * Review a card and move it based on result.
+   * Supports both GitHub (PR review) and local (git diff) modes.
+   */
+  private async reviewCard(
+    card: Card,
+    role: RoleConfig,
+    workflow: WorkflowConfig,
+    config: ReturnType<typeof configManager.load>
+  ): Promise<void> {
+    if (this.dryRun) return;
+
+    this.reviewingCards.add(card.id);
+
+    try {
+      const aiProvider = createAIProvider({
+        provider: (config.ai.provider || 'claude') as 'claude' | 'cursor' | 'codex',
+        defaultModel: 'sonnet',
+        timeoutSeconds: config.ai.timeoutSeconds || 1800,
+      });
+
+      // Find project and agent context
+      const roleProjects = this.getProjectsForRole(role, config.projects);
+      const project = roleProjects[0]; // Use first project for context
+      const projectContext = project?.context;
+      const agentContext = role.context;
+
+      // Check if this card has a PR (GitHub mode) or is local
+      const comments = await this.provider.getComments(card.id);
+      const prComment = comments.find(c => c.text?.includes('**Pull Requests:**') || c.text?.includes('**Pull Request:**'));
+      const prMatch = prComment?.text?.match(/github\.com\/([^/]+\/[^/]+)\/pull\/(\d+)/);
+
+      if (prMatch && this.githubToken) {
+        // GitHub mode: review the PR
+        const repo = prMatch[1];
+        const prNumber = parseInt(prMatch[2], 10);
+
+        const githubClient = new GitHubClient({ token: this.githubToken, defaultRepo: repo });
+        const reviewer = createReviewerAgent({
+          boardProvider: this.provider,
+          aiProvider,
+          githubClient,
+          workflow,
+        });
+
+        log.info('Starting PR review', { cardId: card.id, prNumber, repo });
+
+        await reviewer.processCardForReview({
+          card,
+          prNumber,
+          repo,
+          projectContext,
+          agentContext,
+        });
+      } else {
+        // Local mode: review git diff + agent comment
+        const reviewer = createReviewerAgent({
+          boardProvider: this.provider,
+          aiProvider,
+          workflow,
+        });
+
+        // Get the agent's completion comment
+        const agentCompletionComment = comments.find(c =>
+          c.text?.includes('**Task completed successfully**') ||
+          c.text?.includes('**Task failed**')
+        );
+
+        log.info('Starting local review', { cardId: card.id, project: project?.name });
+
+        await reviewer.processCardForLocalReview({
+          card,
+          projectPath: project?.path || process.cwd(),
+          baseBranch: project?.baseBranch || 'main',
+          projectContext,
+          agentContext,
+          agentComment: agentCompletionComment?.text,
+        });
+      }
+
+      log.info('Review completed', { cardId: card.id });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      log.error('Review failed', { cardId: card.id, error: msg });
+      await this.provider.addComment(card.id, `⚠️ **Automated review failed:** ${msg}`);
+    } finally {
+      this.reviewingCards.delete(card.id);
     }
   }
 
@@ -537,10 +728,11 @@ export function createWorker(
 
   return new Worker({
     provider,
-    pollIntervalMs: (config.worker.pollInterval || 3) * 1000,
-    maxParallelTasks: config.worker.maxParallelTasks || 10,
-    dryRun: config.worker.dryRun || options?.dryRun,
+    pollIntervalMs: options?.pollIntervalMs ?? (config.worker.pollInterval || 3) * 1000,
+    maxParallelTasks: options?.maxParallelTasks ?? (config.worker.maxParallelTasks || 10),
+    dryRun: options?.dryRun ?? config.worker.dryRun,
     taskProcessor: options?.taskProcessor,
-    ...options,
+    githubToken: options?.githubToken,
+    githubEnabled: options?.githubEnabled,
   });
 }

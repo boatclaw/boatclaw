@@ -14,6 +14,7 @@ export const LOG_DIR = join(BOATCLAW_DIR, 'logs');
 export const CONTEXT_DIR = join(BOATCLAW_DIR, 'context');
 export const CACHE_DIR = join(BOATCLAW_DIR, 'cache');
 export const WORKTREE_DIR = join(BOATCLAW_DIR, 'worktrees');
+export const LOCK_FILE = join(BOATCLAW_DIR, 'worker.lock');
 
 /**
  * Ensure all necessary directories exist.
