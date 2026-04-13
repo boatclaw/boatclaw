@@ -4,6 +4,7 @@ AI-powered task automation for development teams.
 
 Connect your project board to AI — tasks become pull requests automatically.
 
+[![npm version](https://img.shields.io/npm/v/boatclaw.svg)](https://www.npmjs.com/package/boatclaw)
 [![MIT License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node.js](https://img.shields.io/badge/node-%3E%3D18-green.svg)](https://nodejs.org)
 
@@ -156,14 +157,22 @@ roles:
 ## Development
 
 ```bash
-git clone https://github.com/AiondaDotCom/boatclaw.git
+git clone https://github.com/boatclaw/boatclaw.git
 cd boatclaw
 npm install
 npm run build
 npm link
 ```
 
+## Contributing
+
+Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+
 ## License
 
 MIT
+
+---
+
+Built with Claude Code
 
