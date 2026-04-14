@@ -299,17 +299,16 @@ export function registerStatusCommands(program: Command): void {
         console.log();
 
         // Check GitHub configuration and validate token
-        let githubEnabled = !!(config.github.enabled &&
-                                 config.github.token &&
-                                 config.github.createPrs);
+        // GitHub is enabled if we have a token and createPrs is on
+        // defaultRepo is optional — projects can have their own github field
+        let githubEnabled = !!(config.github.token && config.github.createPrs);
 
         if (githubEnabled) {
-          // Validate token by making a test API call
+          // Validate token by making a test API call (auth only, no repo needed)
           try {
             const { GitHubClient } = await import('../../github/client.js');
             const testClient = new GitHubClient({
               token: config.github.token,
-              defaultRepo: config.github.defaultRepo,
             });
             const valid = await testClient.verifyConnection();
             if (!valid) throw new Error('Invalid token');

@@ -194,22 +194,42 @@ export function registerGitHubCommands(program: Command): void {
         const user = await client.getUser();
         spinner.succeed(`Authenticated as ${chalk.bold(user.login)}`);
 
-        // Test repo access
-        spinner = ui.spinner('Testing repository access...').start();
-        const defaultBranch = await client.getDefaultBranch();
-        spinner.succeed(`Repository accessible (branch: ${defaultBranch})`);
+        // Test repo access (if defaultRepo is set)
+        if (config.github.defaultRepo) {
+          spinner = ui.spinner('Testing repository access...').start();
+          const defaultBranch = await client.getDefaultBranch();
+          spinner.succeed(`Repository accessible (branch: ${defaultBranch})`);
 
-        // Test branch check
-        spinner = ui.spinner('Testing branch operations...').start();
-        const baseBranchExists = await client.branchExists(
-          config.github.baseBranch
-        );
-        if (baseBranchExists) {
-          spinner.succeed(`Base branch "${config.github.baseBranch}" exists`);
-        } else {
-          spinner.warn(
-            `Base branch "${config.github.baseBranch}" not found`
+          // Test branch check
+          spinner = ui.spinner('Testing branch operations...').start();
+          const baseBranchExists = await client.branchExists(
+            config.github.baseBranch
           );
+          if (baseBranchExists) {
+            spinner.succeed(`Base branch "${config.github.baseBranch}" exists`);
+          } else {
+            spinner.warn(
+              `Base branch "${config.github.baseBranch}" not found`
+            );
+          }
+        } else {
+          // No default repo — check project-level repos instead
+          const projects = Object.values(configManager.getProjects()).filter(p => p.github);
+          if (projects.length > 0) {
+            for (const project of projects) {
+              spinner = ui.spinner(`Testing ${project.github}...`).start();
+              try {
+                const projectClient = new GitHubClient({ token: config.github.token, defaultRepo: project.github });
+                await projectClient.getDefaultBranch();
+                spinner.succeed(`${project.github} accessible`);
+                await projectClient.close();
+              } catch {
+                spinner.fail(`${project.github} not accessible`);
+              }
+            }
+          } else {
+            ui.warning('No repository configured. Set one with "boatclaw github setup" or add github to projects.');
+          }
         }
 
         console.log();
