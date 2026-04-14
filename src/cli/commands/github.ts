@@ -70,83 +70,56 @@ export function registerGitHubCommands(program: Command): void {
         const user = await client.getUser();
         spinner.succeed(`Authenticated as ${chalk.bold(user.login)}`);
 
-        // Get repository
-        const { repo } = await inquirer.prompt([
-          {
-            type: 'input',
-            name: 'repo',
-            message: 'Default repository (owner/repo):',
-            validate: (input: string) => {
-              if (!input.includes('/')) {
-                return 'Format: owner/repo';
-              }
-              return true;
-            },
-          },
-        ]);
-
-        // Verify repo access and get default branch
-        spinner.start('Verifying repository access...');
-        try {
-          const defaultBranch = await client.getDefaultBranch(repo);
-          spinner.succeed(`Repository accessible (branch: ${defaultBranch})`);
-
-          // Get branch settings
-          const { baseBranch, branchPrefix, createPrs, autoReview } =
-            await inquirer.prompt([
-              {
-                type: 'input',
-                name: 'baseBranch',
-                message: 'Base branch for PRs:',
-                default: defaultBranch,
-              },
-              {
-                type: 'input',
-                name: 'branchPrefix',
-                message: 'Branch name prefix:',
-                default: 'feature/',
-              },
-              {
-                type: 'confirm',
-                name: 'createPrs',
-                message: 'Automatically create PRs for completed tasks?',
-                default: true,
-              },
-              {
-                type: 'confirm',
-                name: 'autoReview',
-                message: 'Enable automatic code review?',
-                default: true,
-              },
-            ]);
-
-          // Save configuration
-          const config = configManager.load();
-          config.github = {
-            enabled: true,
-            token,
-            defaultRepo: repo,
-            baseBranch,
-            branchPrefix,
-            createPrs,
-            autoReview,
-          };
-          configManager.save(config);
-
+        // Show which projects have GitHub repos configured
+        const projects = Object.values(configManager.getProjects()).filter(p => p.github);
+        if (projects.length > 0) {
           console.log();
-          ui.success('GitHub integration configured!');
+          ui.dim('Repositories detected from your projects:');
+          for (const p of projects) {
+            console.log(`  - ${p.name}: ${p.github}`);
+          }
           console.log();
-          ui.keyValue('Repository', repo);
-          ui.keyValue('Base Branch', baseBranch);
-          ui.keyValue('Create PRs', createPrs ? 'Yes' : 'No');
-          ui.keyValue('Auto Review', autoReview ? 'Yes' : 'No');
-          console.log();
-        } catch (error) {
-          spinner.fail('Failed to access repository');
-          ui.error(
-            error instanceof Error ? error.message : 'Unknown error'
-          );
         }
+
+        // PR settings
+        const { createPrs, autoReview } =
+          await inquirer.prompt([
+            {
+              type: 'confirm',
+              name: 'createPrs',
+              message: 'Automatically create PRs for completed tasks?',
+              default: true,
+            },
+            {
+              type: 'confirm',
+              name: 'autoReview',
+              message: 'Enable automatic code review?',
+              default: true,
+            },
+          ]);
+
+        // Save configuration
+        const config = configManager.load();
+        config.github = {
+          ...config.github,
+          enabled: true,
+          token,
+          createPrs,
+          autoReview,
+        };
+        configManager.save(config);
+
+        console.log();
+        ui.success('GitHub integration configured!');
+        console.log();
+        ui.keyValue('Create PRs', createPrs ? 'Yes' : 'No');
+        ui.keyValue('Auto Review', autoReview ? 'Yes' : 'No');
+        if (projects.length > 0) {
+          ui.keyValue('Repositories', projects.map(p => p.github).join(', '));
+        } else {
+          ui.dim('No project repos configured yet. Add github to projects with: boatclaw projects add');
+        }
+        console.log();
       } catch (error) {
         spinner.fail('Setup failed');
         ui.error(error instanceof Error ? error.message : 'Unknown error');
