@@ -283,11 +283,18 @@ async function showGitHubStatus(): Promise<void> {
 
       console.log();
       ui.keyValue('User', user.login);
-      ui.keyValue('Repository', config.github.defaultRepo);
-      ui.keyValue('Base Branch', config.github.baseBranch);
-      ui.keyValue('Branch Prefix', config.github.branchPrefix);
       ui.keyValue('Create PRs', config.github.createPrs ? 'Yes' : 'No');
       ui.keyValue('Auto Review', config.github.autoReview ? 'Yes' : 'No');
+
+      // Show repositories from projects
+      const projects = Object.values(configManager.getProjects()).filter(p => p.github);
+      if (projects.length > 0) {
+        console.log();
+        ui.dim('Repositories (from projects):');
+        for (const p of projects) {
+          console.log(`  - ${p.name}: ${p.github}`);
+        }
+      }
     } else {
       spinner.fail('Connection failed - token may be invalid');
     }
