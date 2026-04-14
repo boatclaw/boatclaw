@@ -320,11 +320,28 @@ async function addAgent(): Promise<void> {
   // Label (what card label triggers this agent)
   console.log();
   console.log(chalk.dim('Cards with matching labels will be assigned to this agent.'));
+  // Collect existing labels from all agents
+  const existingLabels = new Set<string>();
+  for (const agent of Object.values(configManager.getRoles())) {
+    for (const label of (agent.labels || [])) {
+      existingLabels.add(label.toLowerCase());
+    }
+  }
+
   const { labelInput } = await inquirer.prompt([{
     type: 'input',
     name: 'labelInput',
     message: 'Card label to match:',
     default: normalizedName,
+    validate: (value: string) => {
+      const inputLabels = value.split(',').map(l => l.trim().toLowerCase()).filter(l => l);
+      if (inputLabels.length === 0) return 'At least one label is required';
+      const duplicates = inputLabels.filter(l => existingLabels.has(l));
+      if (duplicates.length > 0) {
+        return `Label "${duplicates[0]}" is already used by another agent`;
+      }
+      return true;
+    },
   }]);
 
   const labels = labelInput.split(',').map((l: string) => l.trim()).filter((l: string) => l);
