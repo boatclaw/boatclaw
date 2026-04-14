@@ -257,7 +257,7 @@ export class JiraProvider implements BoardProvider {
       const response = await this.client.get<{
         issues: JiraIssue[];
         total: number;
-      }>('/search', {
+      }>('/search/jql', {
         params: {
           jql,
           maxResults: options.limit || 50,
@@ -473,7 +473,7 @@ export class JiraProvider implements BoardProvider {
       // We search for issues to find used labels
       const response = await this.client.get<{
         issues: JiraIssue[];
-      }>('/search', {
+      }>('/search/jql', {
         params: {
           jql: `project = "${this.projectKey}" AND labels IS NOT EMPTY`,
           maxResults: 100,
