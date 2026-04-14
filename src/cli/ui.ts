@@ -218,7 +218,8 @@ export function spinner(text: string): Ora {
  * Simple info box for important information.
  */
 export function infoBox(lines: string[], options?: { width?: number }): void {
-  const width = options?.width ?? 48;
+  const contentWidth = Math.max(...lines.map(l => l.length)) + 2;
+  const width = options?.width ?? Math.max(48, contentWidth);
   console.log();
   console.log(chalk.cyan('  ┌' + '─'.repeat(width) + '┐'));
   for (const line of lines) {

@@ -210,6 +210,70 @@ export function registerAgentsCommands(program: Command): void {
       await editAgentContext(name);
     });
 
+  // Edit agent scope (projects)
+  agents
+    .command('scope <name>')
+    .description('Change which projects an agent works on')
+    .action(async (name: string) => {
+      if (!isInitialized()) {
+        ui.error('Boatclaw is not configured.');
+        return;
+      }
+
+      const existingAgents = configManager.getRoles();
+      if (!(name in existingAgents)) {
+        ui.error(`Agent "${name}" not found.`);
+        return;
+      }
+
+      const agent = existingAgents[name];
+      const projects = Object.keys(configManager.getProjects());
+
+      if (projects.length === 0) {
+        ui.error('No projects configured. Add projects first with: boatclaw projects add');
+        return;
+      }
+
+      // Show current scope
+      const currentScope = agent.projects?.includes('*') ? 'All projects' : agent.projects?.join(', ') || 'None';
+      ui.keyValue('Current scope', currentScope);
+      console.log();
+
+      const { projectSelection } = await inquirer.prompt([{
+        type: 'list',
+        name: 'projectSelection',
+        message: 'Which projects should this agent work on?',
+        choices: [
+          { name: 'All projects', value: 'all' },
+          { name: 'Select specific projects', value: 'select' },
+        ],
+      }]);
+
+      if (projectSelection === 'all') {
+        agent.projects = ['*'];
+      } else {
+        const { selected } = await inquirer.prompt([{
+          type: 'checkbox',
+          name: 'selected',
+          message: 'Select projects (space to select, enter to confirm):',
+          choices: projects.map((p) => ({
+            name: p,
+            value: p,
+            checked: agent.projects?.includes(p) || agent.projects?.includes('*'),
+          })),
+          validate: (answer: string[]) => {
+            if (answer.length === 0) return 'Select at least one project';
+            return true;
+          },
+        }]);
+        agent.projects = selected;
+      }
+
+      configManager.setRole(name, agent);
+      const newScope = agent.projects.includes('*') ? 'All projects' : agent.projects.join(', ');
+      ui.success(`Agent "${name}" scope updated: ${newScope}`);
+    });
+
   // Ask agent (interactive chat)
   agents
     .command('ask <name>')
