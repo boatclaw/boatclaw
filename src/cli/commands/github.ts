@@ -307,4 +307,10 @@ async function showGitHubStatus(): Promise<void> {
   }
 
   console.log();
+
+  ui.actions([
+    { cmd: 'boatclaw github setup', desc: 'Configure GitHub integration' },
+    { cmd: 'boatclaw github test', desc: 'Test connection' },
+    { cmd: 'boatclaw github disable', desc: 'Disable GitHub integration' },
+  ]);
 }

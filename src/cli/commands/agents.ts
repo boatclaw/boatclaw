@@ -771,5 +771,6 @@ function listAgents(): void {
     { cmd: 'boatclaw agents enable <name>', desc: 'Enable an agent' },
     { cmd: 'boatclaw agents disable <name>', desc: 'Disable an agent' },
     { cmd: 'boatclaw agents context <name>', desc: 'Edit agent context' },
+    { cmd: 'boatclaw agents scope <name>', desc: 'Change project scope' },
   ]);
 }

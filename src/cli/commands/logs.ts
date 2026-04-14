@@ -99,6 +99,13 @@ function showLogs(options: { lines?: string; level?: string; json?: boolean }): 
   } catch (error) {
     ui.error(`Failed to read log file: ${error instanceof Error ? error.message : String(error)}`);
   }
+
+  ui.actions([
+    { cmd: 'boatclaw logs list', desc: 'List all log files' },
+    { cmd: 'boatclaw logs show <file>', desc: 'View a specific log file' },
+    { cmd: 'boatclaw logs tail', desc: 'Watch live logs' },
+    { cmd: 'boatclaw logs clear', desc: 'Delete old logs' },
+  ]);
 }
 
 function listLogFiles(): void {
