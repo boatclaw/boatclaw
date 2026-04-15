@@ -39,6 +39,7 @@ export interface ProjectProcessingResult {
 export interface TaskProcessingResult {
   success: boolean;
   output: string;
+  summary?: string;
   error?: string;
   durationMs: number;
   projectResults: ProjectProcessingResult[];
@@ -148,6 +149,7 @@ export class TaskProcessor {
     projects: ProjectConfig[],
     options?: {
       additionalInstructions?: string;
+      cardComments?: string;
       dryRun?: boolean;
       onProjectComplete?: (result: ProjectProcessingResult) => void;
     }
@@ -193,9 +195,12 @@ export class TaskProcessor {
     const totalDuration = Date.now() - startTime;
     const overallSuccess = hasAnySuccess && !hasAnyFailure;
 
+    const fullOutput = outputs.join('\n\n');
+
     return {
       success: overallSuccess,
-      output: outputs.join('\n\n'),
+      output: fullOutput,
+      summary: this.extractSummary(fullOutput),
       error: hasAnyFailure
         ? projectResults
             .filter(r => !r.success)
@@ -216,6 +221,7 @@ export class TaskProcessor {
     project: ProjectConfig,
     options?: {
       additionalInstructions?: string;
+      cardComments?: string;
       dryRun?: boolean;
     }
   ): Promise<ProjectProcessingResult> {
@@ -252,7 +258,9 @@ export class TaskProcessor {
 
       // 2. Create task context with project-specific context
       const context = createTaskContext(card, role, {
+        projectContext: project.context,
         projectContextFile: project.contextFile,
+        cardComments: options?.cardComments,
         additionalInstructions: options?.additionalInstructions,
         projectName: project.name,
         projectPath: project.path,
@@ -358,10 +366,16 @@ export class TaskProcessor {
   }
 
   /**
-   * Extract a summary from AI output.
+   * Extract a structured summary from AI output.
    */
   private extractSummary(output: string): string {
-    // Look for common summary patterns
+    // Try to extract the structured completion summary
+    const structuredMatch = output.match(/\*\*What was done:\*\*[\s\S]*?---/);
+    if (structuredMatch) {
+      return structuredMatch[0].trim().slice(0, 2000);
+    }
+
+    // Fallback: look for common summary patterns
     const patterns = [
       /summary:?\s*(.+?)(?:\n|$)/i,
       /changes?:?\s*(.+?)(?:\n|$)/i,
@@ -415,6 +429,7 @@ export function createTaskProcessorFunction(
   role: RoleConfig,
   projects: ProjectConfig[],
   onProjectComplete?: (result: { projectName: string; success: boolean; error?: string; prUrl?: string; prNumber?: number; output?: string }) => void,
+  cardComments?: string,
 ) => Promise<{
   success: boolean;
   output: string;
@@ -423,15 +438,17 @@ export function createTaskProcessorFunction(
 }> {
   const processor = new TaskProcessor(options);
 
-  return async (card, role, projects, onProjectComplete) => {
+  return async (card, role, projects, onProjectComplete, cardComments) => {
     const result = await processor.processMultiProject(card, role, projects, {
       dryRun: options?.dryRun,
+      cardComments,
       onProjectComplete: onProjectComplete || options?.onProjectComplete,
     });
 
     return {
       success: result.success,
       output: result.output,
+      summary: result.summary,
       error: result.error,
       projectResults: result.projectResults.map(pr => ({
         projectName: pr.projectName,
