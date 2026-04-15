@@ -78,8 +78,10 @@ export class ReviewerAgent {
     timeoutMs?: number;
     projectContext?: string;
     agentContext?: string;
+    ticketComments?: string;
+    agentComment?: string;
   }): Promise<ReviewResult> {
-    const { card, prNumber, repo, timeoutMs = 900000, projectContext, agentContext } = options;
+    const { card, prNumber, repo, timeoutMs = 900000, projectContext, agentContext, ticketComments, agentComment } = options;
 
     try {
       if (!this.github) {
@@ -97,7 +99,7 @@ export class ReviewerAgent {
       const model = this.selectModelForReview(diffSize);
 
       // Build review prompt
-      const prompt = this.buildReviewPrompt(card, diff, files, projectContext, agentContext);
+      const prompt = this.buildReviewPrompt(card, diff, files, projectContext, agentContext, ticketComments, agentComment);
 
       // Execute AI
       const result = await this.ai.execute({
@@ -183,8 +185,10 @@ export class ReviewerAgent {
     repo?: string;
     projectContext?: string;
     agentContext?: string;
+    ticketComments?: string;
+    agentComment?: string;
   }): Promise<ReviewResult> {
-    const { card, prNumber, repo, projectContext, agentContext } = options;
+    const { card, prNumber, repo, projectContext, agentContext, ticketComments, agentComment } = options;
 
     // Add started comment
     await this.board.addComment(
@@ -193,7 +197,7 @@ export class ReviewerAgent {
     );
 
     // Perform review
-    const result = await this.reviewPR({ card, prNumber, repo, projectContext, agentContext });
+    const result = await this.reviewPR({ card, prNumber, repo, projectContext, agentContext, ticketComments, agentComment });
 
     // Submit to GitHub
     await this.submitReview({ prNumber, reviewResult: result, repo });
@@ -245,9 +249,10 @@ Please address the issues and update the PR.
     projectContext?: string;
     agentContext?: string;
     agentComment?: string;
+    ticketComments?: string;
     timeoutMs?: number;
   }): Promise<ReviewResult> {
-    const { card, projectPath, baseBranch = 'main', projectContext, agentContext, agentComment, timeoutMs = 900000 } = options;
+    const { card, projectPath, baseBranch = 'main', projectContext, agentContext, agentComment, ticketComments, timeoutMs = 900000 } = options;
 
     try {
       // Get diff against base branch — catches both committed and uncommitted changes
@@ -284,7 +289,7 @@ Please address the issues and update the PR.
       const model = this.selectModelForReview(diffLines);
 
       // Build review prompt for local mode
-      const prompt = this.buildLocalReviewPrompt(card, diff, agentOutput, projectContext, agentContext);
+      const prompt = this.buildLocalReviewPrompt(card, diff, agentOutput, projectContext, agentContext, ticketComments);
 
       const result = await this.ai.execute({
         prompt,
@@ -327,15 +332,16 @@ Please address the issues and update the PR.
     projectContext?: string;
     agentContext?: string;
     agentComment?: string;
+    ticketComments?: string;
   }): Promise<ReviewResult> {
-    const { card, projectPath, baseBranch, projectContext, agentContext, agentComment } = options;
+    const { card, projectPath, baseBranch, projectContext, agentContext, agentComment, ticketComments } = options;
 
     await this.board.addComment(
       card.id,
       `🔍 **Boatclaw starting review**\n\nReviewing changes in project...`
     );
 
-    const result = await this.reviewLocal({ card, projectPath, baseBranch, projectContext, agentContext, agentComment });
+    const result = await this.reviewLocal({ card, projectPath, baseBranch, projectContext, agentContext, agentComment, ticketComments });
 
     if (result.approved) {
       await this.board.addComment(card.id, `✅ **Review passed**\n\n**Summary:** ${result.summary}`);
@@ -359,6 +365,7 @@ Please address the issues and update the PR.
     agentComment: string,
     projectContext?: string,
     agentContext?: string,
+    ticketComments?: string,
   ): string {
     const sections: string[] = [];
 
@@ -370,6 +377,10 @@ Please address the issues and update the PR.
 
     if (agentContext) {
       sections.push(`## Agent Instructions\n${agentContext}`);
+    }
+
+    if (ticketComments) {
+      sections.push(`## Ticket Comments\n${ticketComments}`);
     }
 
     sections.push(`## Task\n**Title:** ${card.title}\n**Description:** ${card.description || 'No description provided'}`);
@@ -410,6 +421,8 @@ If approved, ISSUES can be empty.`);
     files: ChangedFile[],
     projectContext?: string,
     agentContext?: string,
+    ticketComments?: string,
+    agentComment?: string,
   ): string {
     const fileList = files
       .map((f) => `- ${f.filename} (+${f.additions} -${f.deletions})`)
@@ -431,11 +444,19 @@ ${projectContext}`);
 ${agentContext}`);
     }
 
+    if (ticketComments) {
+      sections.push(`## Ticket Comments\n${ticketComments}`);
+    }
+
     sections.push(`## Task
 **Title:** ${card.title}
-**Description:** ${card.description || 'No description provided'}
+**Description:** ${card.description || 'No description provided'}`);
 
-## Files Changed
+    if (agentComment) {
+      sections.push(`## Developer Agent's Report\nThe AI agent posted this summary after implementing the task:\n\n${agentComment.slice(0, 3000)}`);
+    }
+
+    sections.push(`## Files Changed
 ${fileList}
 
 ## Diff
