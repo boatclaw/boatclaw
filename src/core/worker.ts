@@ -214,8 +214,16 @@ export class Worker extends EventEmitter {
       this.pollTimer = null;
     }
 
-    // Wait for in-progress tasks and reviews to complete
+    // Wait for in-progress tasks and reviews to complete (with 5-minute timeout)
+    const stopDeadline = Date.now() + 5 * 60 * 1000;
     while (this.processingCards.size > 0 || this.reviewingCards.size > 0) {
+      if (Date.now() > stopDeadline) {
+        log.warn('Stop timeout reached, forcing shutdown', {
+          pendingTasks: this.processingCards.size,
+          pendingReviews: this.reviewingCards.size,
+        });
+        break;
+      }
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
 
@@ -540,7 +548,10 @@ export class Worker extends EventEmitter {
       !text.startsWith('❌ **') &&
       !text.includes('**Planning complete**') &&
       !text.includes('**Aborting remaining projects**') &&
-      !text.includes('<!-- BOATCLAW_PLANNED_PROJECTS:');
+      !text.includes('<!-- BOATCLAW_PLANNED_PROJECTS:') &&
+      // MCP interactive mode comments
+      !text.includes('Question from AI:') &&
+      !text.includes('**AI Update:**');
   }
 
   /**
@@ -698,6 +709,9 @@ export class Worker extends EventEmitter {
       for (const card of cards) {
         if (this.shouldStop) break;
         if (this.reviewingCards.has(card.id)) continue;
+
+        // Limit parallel reviews (same limit as tasks)
+        if (this.reviewingCards.size >= this.maxParallelTasks) break;
 
         // Only review cards that have a matching agent label
         const cardLabels = card.labels.map(l => l.name.toLowerCase());
