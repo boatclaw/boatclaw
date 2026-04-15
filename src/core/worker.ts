@@ -588,6 +588,10 @@ export class Worker extends EventEmitter {
       if (prLinks) {
         parts.push(`🔗 **Pull Requests:**\n${prLinks}`);
       }
+
+      // Add planned projects marker for review phase (machine-readable)
+      const plannedNames = projectResults.map(r => r.projectName).join(',');
+      parts.push(`<!-- BOATCLAW_PLANNED_PROJECTS:${plannedNames} -->`);
     } else if (prUrl) {
       parts.push(`🔗 **Pull Request:** ${prUrl}`);
     }
@@ -732,6 +736,15 @@ export class Worker extends EventEmitter {
         c.text?.includes('**Task failed**')
       );
 
+      // Extract planned projects from the completion comment (if planner was used)
+      let plannedProjectNames: string[] | null = null;
+      if (agentCompletionComment?.text) {
+        const plannedMatch = agentCompletionComment.text.match(/<!-- BOATCLAW_PLANNED_PROJECTS:(.+?) -->/);
+        if (plannedMatch) {
+          plannedProjectNames = plannedMatch[1].split(',').map(n => n.trim());
+        }
+      }
+
       // Collect all review results — move card only after all reviews complete
       const reviewResults: { name: string; approved: boolean }[] = [];
 
@@ -775,7 +788,14 @@ export class Worker extends EventEmitter {
         }
       } else {
         // Local mode: review each project's changes with error isolation
-        const projectsToReview = roleProjects.length > 0 ? roleProjects : (project ? [project] : []);
+        let projectsToReview = roleProjects.length > 0 ? roleProjects : (project ? [project] : []);
+
+        // Filter to only planned projects if planner was used
+        if (plannedProjectNames) {
+          projectsToReview = projectsToReview.filter(p =>
+            plannedProjectNames!.some(name => name.toLowerCase() === p.name.toLowerCase())
+          );
+        }
 
         for (const proj of projectsToReview) {
           try {
