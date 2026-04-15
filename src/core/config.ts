@@ -235,7 +235,18 @@ export class ConfigManager {
     }
 
     obj[keys[keys.length - 1]] = value;
-    this.save(config);
+
+    // Re-validate through Zod to catch invalid values
+    try {
+      this.config = BoatclawConfigSchema.parse(config);
+    } catch (error) {
+      // Revert the change
+      this.config = null; // Force reload from file on next access
+      const msg = error instanceof Error ? error.message : String(error);
+      throw new Error(`Invalid config value for "${path}": ${msg}`);
+    }
+
+    this.save(this.config);
   }
 
   /**

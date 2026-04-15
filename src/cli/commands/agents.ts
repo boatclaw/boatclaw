@@ -169,7 +169,10 @@ export function registerAgentsCommands(program: Command): void {
       ui.keyValue('Projects', agent.projects?.includes('*') ? 'All projects' : agent.projects?.join(', ') || 'None');
       ui.keyValue('Provider', agent.provider || configManager.get<string>('ai.provider') || 'claude');
       ui.keyValue('Model', agent.model);
-      ui.keyValue('Context', agent.context ? chalk.green('✓ Set') : chalk.dim('Not set'));
+      const agentContextText = agent.context
+        ? chalk.green('✓ Set')
+        : (agent.contextFile ? chalk.green(`✓ From file: ${agent.contextFile}`) : chalk.dim('Not set'));
+      ui.keyValue('Context', agentContextText);
       ui.keyValue('Status', agent.enabled ? chalk.green('Enabled') : chalk.dim('Disabled'));
 
       // Show which projects this agent will work on
@@ -184,7 +187,7 @@ export function registerAgentsCommands(program: Command): void {
         }
       }
 
-      // Show context if exists
+      // Show context if exists (inline or from file)
       if (agent.context) {
         console.log();
         console.log(chalk.dim('Context:'));
@@ -197,6 +200,9 @@ export function registerAgentsCommands(program: Command): void {
           console.log(chalk.cyan('  │') + chalk.dim(' ... (truncated)'.padEnd(49)) + chalk.cyan('│'));
         }
         console.log(chalk.cyan('  └' + '─'.repeat(50) + '┘'));
+      } else if (agent.contextFile) {
+        console.log();
+        console.log(chalk.dim(`Context from file: ${agent.contextFile}`));
       }
 
       console.log();
@@ -784,8 +790,9 @@ function listAgents(): void {
     console.log('  ' + chalk.cyan(linePrefix) + '   Scope    ' + chalk.dim(projectScope));
     console.log('  ' + chalk.cyan(linePrefix) + '   Model    ' + chalk.dim(agent.model));
 
-    if (agent.context) {
-      console.log('  ' + chalk.cyan(linePrefix) + '   Context  ' + chalk.green('✓ Set'));
+    if (agent.context || agent.contextFile) {
+      const contextSource = agent.context ? '✓ Set' : `✓ From file: ${agent.contextFile}`;
+      console.log('  ' + chalk.cyan(linePrefix) + '   Context  ' + chalk.green(contextSource));
     }
 
     if (!isLast) console.log('  ' + chalk.cyan('│'));
