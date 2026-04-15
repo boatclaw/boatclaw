@@ -191,9 +191,10 @@ export class TaskProcessor {
       }
     }
 
-    // Aggregate results
+    // Aggregate results — success if at least one project succeeded
+    // A project with no changes is still a success (e.g., backend-only task on frontend project)
     const totalDuration = Date.now() - startTime;
-    const overallSuccess = hasAnySuccess && !hasAnyFailure;
+    const overallSuccess = hasAnySuccess;
 
     const fullOutput = outputs.join('\n\n');
 

@@ -202,37 +202,16 @@ export class ReviewerAgent {
     // Submit to GitHub
     await this.submitReview({ prNumber, reviewResult: result, repo });
 
-    // Update board card
+    // Post review result as comment (card movement handled by caller)
     if (result.approved) {
-      const comment = `✅ **Code review passed**
-
-**Summary:** ${result.summary}
-
-The PR has been approved and is ready for human review and merge.
-`;
-      await this.board.addComment(card.id, comment);
-
-      // Move to success state
-      if (this.workflow.successId) {
-        await this.board.moveCard(card.id, this.workflow.successId);
-      }
+      await this.board.addComment(card.id,
+        `✅ **Code review passed** (PR #${prNumber})\n\n**Summary:** ${result.summary}`
+      );
     } else {
       const issuesText = result.issues.map((issue) => `- ${issue}`).join('\n');
-      const comment = `❌ **Code review found issues**
-
-**Summary:** ${result.summary}
-
-**Issues:**
-${issuesText}
-
-Please address the issues and update the PR.
-`;
-      await this.board.addComment(card.id, comment);
-
-      // Move to failed/needs-work state
-      if (this.workflow.failedId) {
-        await this.board.moveCard(card.id, this.workflow.failedId);
-      }
+      await this.board.addComment(card.id,
+        `❌ **Code review found issues** (PR #${prNumber})\n\n**Summary:** ${result.summary}\n\n**Issues:**\n${issuesText}`
+      );
     }
 
     return result;
@@ -343,17 +322,12 @@ Please address the issues and update the PR.
 
     const result = await this.reviewLocal({ card, projectPath, baseBranch, projectContext, agentContext, agentComment, ticketComments });
 
+    // Post review result as comment (card movement handled by caller)
     if (result.approved) {
       await this.board.addComment(card.id, `✅ **Review passed**\n\n**Summary:** ${result.summary}`);
-      if (this.workflow.successId) {
-        await this.board.moveCard(card.id, this.workflow.successId);
-      }
     } else {
       const issuesText = result.issues.map(i => `- ${i}`).join('\n');
       await this.board.addComment(card.id, `❌ **Review found issues**\n\n**Summary:** ${result.summary}\n\n**Issues:**\n${issuesText}`);
-      if (this.workflow.failedId) {
-        await this.board.moveCard(card.id, this.workflow.failedId);
-      }
     }
 
     return result;

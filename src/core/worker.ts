@@ -680,10 +680,9 @@ export class Worker extends EventEmitter {
       const projectContext = project?.context;
       const agentContext = role.context;
 
-      // Check if this card has a PR (GitHub mode) or is local
+      // Check if this card has PRs (GitHub mode) or is local
       const comments = await this.provider.getComments(card.id);
       const prComment = comments.find(c => c.text?.includes('**Pull Requests:**') || c.text?.includes('**Pull Request:**'));
-      const prMatch = prComment?.text?.match(/github\.com\/([^/]+\/[^/]+)\/pull\/(\d+)/);
 
       // Format all non-bot comments for review context
       const humanComments = comments.filter(c => {
@@ -706,52 +705,95 @@ export class Worker extends EventEmitter {
         c.text?.includes('**Task failed**')
       );
 
-      if (prMatch && this.githubToken) {
-        // GitHub mode: review the PR + agent's report
-        const repo = prMatch[1];
-        const prNumber = parseInt(prMatch[2], 10);
+      // Collect all review results — move card only after all reviews complete
+      const reviewResults: { name: string; approved: boolean }[] = [];
 
-        const githubClient = new GitHubClient({ token: this.githubToken, defaultRepo: repo });
-        const reviewer = createReviewerAgent({
-          boardProvider: this.provider,
-          aiProvider,
-          githubClient,
-          workflow,
-        });
+      // Find ALL PR URLs in comments (multi-project tasks have multiple PRs)
+      const allPrMatches = prComment?.text?.matchAll(/github\.com\/([^/]+\/[^/]+)\/pull\/(\d+)/g);
+      const prList = allPrMatches ? [...allPrMatches].map(m => ({ repo: m[1], prNumber: parseInt(m[2], 10) })) : [];
 
-        log.info('Starting PR review', { cardId: card.id, prNumber, repo });
+      if (prList.length > 0 && this.githubToken) {
+        // GitHub mode: review each PR separately with error isolation
+        for (const pr of prList) {
+          try {
+            const prProject = Object.values(config.projects).find(p => p.github === pr.repo);
 
-        await reviewer.processCardForReview({
-          card,
-          prNumber,
-          repo,
-          projectContext,
-          agentContext,
-          ticketComments,
-          agentComment: agentCompletionComment?.text,
-        });
+            const githubClient = new GitHubClient({ token: this.githubToken, defaultRepo: pr.repo });
+            const reviewer = createReviewerAgent({
+              boardProvider: this.provider,
+              aiProvider,
+              githubClient,
+              workflow,
+            });
+
+            log.info('Starting PR review', { cardId: card.id, prNumber: pr.prNumber, repo: pr.repo });
+
+            const result = await reviewer.processCardForReview({
+              card,
+              prNumber: pr.prNumber,
+              repo: pr.repo,
+              projectContext: prProject?.context || projectContext,
+              agentContext,
+              ticketComments,
+              agentComment: agentCompletionComment?.text,
+            });
+
+            reviewResults.push({ name: pr.repo, approved: result.approved });
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            log.error('PR review failed', { cardId: card.id, prNumber: pr.prNumber, error: msg });
+            await this.provider.addComment(card.id, `⚠️ **Review failed for PR #${pr.prNumber}:** ${msg}`);
+            reviewResults.push({ name: pr.repo, approved: false });
+          }
+        }
       } else {
-        // Local mode: review git diff + agent comment
-        const reviewer = createReviewerAgent({
-          boardProvider: this.provider,
-          aiProvider,
-          workflow,
-        });
+        // Local mode: review each project's changes with error isolation
+        const projectsToReview = roleProjects.length > 0 ? roleProjects : (project ? [project] : []);
 
-        log.info('Starting local review', { cardId: card.id, project: project?.name });
+        for (const proj of projectsToReview) {
+          try {
+            const reviewer = createReviewerAgent({
+              boardProvider: this.provider,
+              aiProvider,
+              workflow,
+            });
 
-        await reviewer.processCardForLocalReview({
-          card,
-          projectPath: project?.path || process.cwd(),
-          baseBranch: project?.baseBranch || 'main',
-          projectContext,
-          agentContext,
-          agentComment: agentCompletionComment?.text,
-          ticketComments,
-        });
+            log.info('Starting local review', { cardId: card.id, project: proj.name });
+
+            const result = await reviewer.processCardForLocalReview({
+              card,
+              projectPath: proj.path || process.cwd(),
+              baseBranch: proj.baseBranch || 'main',
+              projectContext: proj.context || projectContext,
+              agentContext,
+              agentComment: agentCompletionComment?.text,
+              ticketComments,
+            });
+
+            reviewResults.push({ name: proj.name, approved: result.approved });
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            log.error('Local review failed', { cardId: card.id, project: proj.name, error: msg });
+            await this.provider.addComment(card.id, `⚠️ **Review failed for ${proj.name}:** ${msg}`);
+            reviewResults.push({ name: proj.name, approved: false });
+          }
+        }
       }
 
-      log.info('Review completed', { cardId: card.id });
+      // Move card based on aggregated review results — all must pass
+      const allApproved = reviewResults.length > 0 && reviewResults.every(r => r.approved);
+
+      if (allApproved) {
+        if (workflow.successId) {
+          await this.provider.moveCard(card.id, workflow.successId);
+        }
+      } else {
+        if (workflow.failedId) {
+          await this.provider.moveCard(card.id, workflow.failedId);
+        }
+      }
+
+      log.info('Review completed', { cardId: card.id, allApproved, results: reviewResults });
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       log.error('Review failed', { cardId: card.id, error: msg });
