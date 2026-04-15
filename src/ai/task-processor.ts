@@ -459,10 +459,10 @@ export class TaskProcessor {
           log.info('PR created', { prUrl: prResult.pr.htmlUrl, project: project.name });
         }
 
-        // Cleanup worktree after PR creation
-        await prManager.cleanupTask(taskId);
+        // Cleanup worktree after PR creation (keep remote branch for the PR)
+        await prManager.cleanupTask(taskId, { keepRemoteBranch: !!prResult.pr });
       } else if (prManager) {
-        // Cleanup worktree on failure
+        // Cleanup worktree on failure (delete remote branch too)
         await prManager.cleanupTask(taskId);
       }
 

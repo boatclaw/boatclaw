@@ -170,7 +170,7 @@ export class WorktreeManager {
   /**
    * Remove a worktree
    */
-  async removeWorktree(taskId: string): Promise<boolean> {
+  async removeWorktree(taskId: string, options?: { keepRemoteBranch?: boolean }): Promise<boolean> {
     const worktreePath = this.getWorktreePath(taskId);
 
     if (!existsSync(worktreePath)) {
@@ -193,7 +193,8 @@ export class WorktreeManager {
     }
 
     // Try to delete the remote branch (best effort)
-    if (worktree) {
+    // Skip if keepRemoteBranch is set (e.g., when a PR was created from this branch)
+    if (worktree && !options?.keepRemoteBranch) {
       try {
         await this.runGit(['push', 'origin', '--delete', worktree.branch], this.mainRepoPath);
       } catch {
