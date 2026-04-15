@@ -33,19 +33,53 @@ export function registerSetupCommand(program: Command): void {
 
       // Check for existing config
       if (isInitialized() && !options.reset) {
-        const { proceed } = await inquirer.prompt([
+        const { action } = await inquirer.prompt([
           {
-            type: 'confirm',
-            name: 'proceed',
-            message: 'Configuration already exists. Do you want to reconfigure?',
-            default: false,
+            type: 'list',
+            name: 'action',
+            message: 'Configuration already exists. What would you like to reconfigure?',
+            choices: [
+              { name: 'Board connection & workflow', value: 'board' },
+              { name: 'AI provider', value: 'ai' },
+              { name: 'Everything (reset all)', value: 'reset' },
+              { name: 'Cancel', value: 'cancel' },
+            ],
           },
         ]);
 
-        if (!proceed) {
+        if (action === 'cancel') {
           ui.info('Setup cancelled. Use "boatclaw status" to see current config.');
           return;
         }
+
+        ensureDirs();
+
+        try {
+          if (action === 'board') {
+            await setupPlatform();
+            await setupWorkflow();
+            showSummary();
+          } else if (action === 'ai') {
+            await setupAI();
+            showSummary();
+          } else {
+            // Full reset — run everything
+            await setupPlatform();
+            await setupWorkflow();
+            await setupAI();
+            await setupInitialProject();
+            await setupInitialAgent();
+            await setupGitHub();
+            showSummary();
+          }
+        } catch (error) {
+          if (error instanceof Error && error.message === 'prompt cancelled') {
+            ui.warning('\nSetup cancelled.');
+            return;
+          }
+          throw error;
+        }
+        return;
       }
 
       ensureDirs();
