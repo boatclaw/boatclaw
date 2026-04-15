@@ -371,7 +371,7 @@ export class TaskProcessor {
    */
   private extractSummary(output: string): string {
     // Try to extract the structured completion summary
-    const structuredMatch = output.match(/\*\*What was done:\*\*[\s\S]*?---/);
+    const structuredMatch = output.match(/\*\*What was done:\*\*[\s\S]*?^---$/m);
     if (structuredMatch) {
       return structuredMatch[0].trim().slice(0, 2000);
     }
