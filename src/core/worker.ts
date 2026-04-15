@@ -521,30 +521,30 @@ export class Worker extends EventEmitter {
   }
 
   /**
+   * Check if a comment is from a human (not a bot/system comment).
+   */
+  private isHumanComment(text: string): boolean {
+    return !text.includes('**Boatclaw') &&
+      !text.includes('**Task completed') &&
+      !text.includes('**Task failed') &&
+      !text.includes('**Code review') &&
+      !text.includes('**Review passed') &&
+      !text.includes('**Review found') &&
+      !text.includes('**Automated review') &&
+      !text.startsWith('✅ **') &&
+      !text.startsWith('❌ **') &&
+      !text.includes('**Planning complete**') &&
+      !text.includes('**Aborting remaining projects**') &&
+      !text.includes('<!-- BOATCLAW_PLANNED_PROJECTS:');
+  }
+
+  /**
    * Fetch human comments from a card, filtering out bot comments.
    * Returns formatted string or undefined if no human comments.
    */
   private async fetchHumanComments(cardId: string): Promise<string | undefined> {
     const comments = await this.provider.getComments(cardId);
-    const humanComments = comments.filter(c => {
-      const t = c.text;
-      return !t.includes('**Boatclaw') &&
-        !t.includes('**Task completed') &&
-        !t.includes('**Task failed') &&
-        !t.includes('**Code review') &&
-        !t.includes('**Review passed') &&
-        !t.includes('**Review found') &&
-        !t.includes('**Automated review') &&
-        // Per-project status updates
-        !t.startsWith('✅ **') &&
-        !t.startsWith('❌ **') &&
-        // Planning comments
-        !t.includes('**Planning complete**') &&
-        // Abort notices
-        !t.includes('**Aborting remaining projects**') &&
-        // Machine-readable markers
-        !t.includes('<!-- BOATCLAW_PLANNED_PROJECTS:');
-    });
+    const humanComments = comments.filter(c => this.isHumanComment(c.text));
     if (humanComments.length === 0) return undefined;
     return humanComments
       .map(c => `**${c.authorName}** (${c.createdAt.toISOString().split('T')[0]}):\n${c.text}`)
@@ -726,25 +726,7 @@ export class Worker extends EventEmitter {
       const prComment = comments.find(c => c.text?.includes('**Pull Requests:**') || c.text?.includes('**Pull Request:**'));
 
       // Format all non-bot comments for review context
-      const humanComments = comments.filter(c => {
-          const t = c.text;
-          return !t.includes('**Boatclaw') &&
-            !t.includes('**Task completed') &&
-            !t.includes('**Task failed') &&
-            !t.includes('**Code review') &&
-            !t.includes('**Review passed') &&
-            !t.includes('**Review found') &&
-            !t.includes('**Automated review') &&
-            // Per-project status updates
-            !t.startsWith('✅ **') &&
-            !t.startsWith('❌ **') &&
-            // Planning comments
-            !t.includes('**Planning complete**') &&
-            // Abort notices
-            !t.includes('**Aborting remaining projects**') &&
-            // Machine-readable markers
-            !t.includes('<!-- BOATCLAW_PLANNED_PROJECTS:');
-        });
+      const humanComments = comments.filter(c => this.isHumanComment(c.text));
       const ticketComments = humanComments.length > 0
         ? humanComments.map(c => `**${c.authorName}** (${c.createdAt.toISOString().split('T')[0]}):\n${c.text}`).join('\n\n---\n\n').slice(0, 5000)
         : undefined;
@@ -772,8 +754,17 @@ export class Worker extends EventEmitter {
       const prList = allPrMatches ? [...allPrMatches].map(m => ({ repo: m[1], prNumber: parseInt(m[2], 10) })) : [];
 
       if (prList.length > 0 && this.githubToken) {
+        // Filter PRs to only planned projects if planner was used
+        let prsToReview = prList;
+        if (plannedProjectNames) {
+          prsToReview = prList.filter(pr => {
+            const prProject = Object.values(config.projects).find(p => p.github === pr.repo);
+            return !prProject || plannedProjectNames!.some(name => name.toLowerCase() === prProject.name.toLowerCase());
+          });
+        }
+
         // GitHub mode: review each PR separately with error isolation
-        for (const pr of prList) {
+        for (const pr of prsToReview) {
           try {
             const prProject = Object.values(config.projects).find(p => p.github === pr.repo);
 
