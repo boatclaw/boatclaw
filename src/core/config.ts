@@ -109,6 +109,8 @@ export const AIConfigSchema = z.object({
   provider: AIProviderSchema.default('claude'),
   availableProviders: z.array(AIProviderSchema).optional(),
   defaultModel: ModelSchema.default('auto'),
+  /** Model used for the planning phase in multi-project tasks */
+  plannerModel: ModelSchema.default('haiku'),
   apiKey: z.string().optional(),
   timeoutSeconds: z.number().default(1800),
   /** Enable interactive mode (ask_human) - only works with Claude Code */

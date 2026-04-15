@@ -176,7 +176,8 @@ export class TaskProcessor {
     let projectsToProcess = projects;
 
     if (projects.length > 1) {
-      plan = await planTask(card, role, projects, this.baseProvider, options?.cardComments);
+      const config = configManager.load();
+      plan = await planTask(card, role, projects, this.baseProvider, options?.cardComments, config.ai.plannerModel);
 
       // Filter and reorder projects based on plan
       const plannedProjects = plan.projects

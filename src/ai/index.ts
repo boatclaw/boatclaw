@@ -51,6 +51,12 @@ export {
   createTaskProcessorFunction,
 } from './task-processor.js';
 
+// Planner
+export {
+  TaskPlan,
+  planTask,
+} from './planner.js';
+
 // Factory
 import { AIProvider, AIProviderConfig, Model } from './types.js';
 import { createClaudeProvider, MCPServerConfig } from './claude.js';
@@ -180,7 +186,7 @@ export async function checkAIAvailability(provider: string): Promise<{
 }> {
   try {
     const aiProvider = createAIProvider({
-      provider: provider as 'claude' | 'cursor',
+      provider: provider as 'claude' | 'cursor' | 'codex',
       defaultModel: 'sonnet',
       timeoutSeconds: 30,
     });
