@@ -262,6 +262,8 @@ export class ClaudeProvider implements AIProvider {
       '--print',
       // Model selection
       '--model', modelName,
+      // Allow editing files and running commands without permission prompts
+      '--permission-mode', 'acceptEdits',
     ];
 
     // Add max tokens if specified
@@ -295,6 +297,8 @@ export class ClaudeProvider implements AIProvider {
       '--print',
       // Model selection
       '--model', modelName,
+      // Allow editing files and running commands without permission prompts
+      '--permission-mode', 'acceptEdits',
       // MCP config for ask_human tool
       '--mcp-config', mcpConfigPath,
       // Allow MCP tools without permission prompts
