@@ -58,6 +58,7 @@ export interface TaskContext {
   projectName?: string;     // Current project name
   projectContext?: string;  // Project-specific context
   roleContext?: string;     // Engineer-specific context
+  cardComments?: string;    // Comments from the ticket
   additionalInstructions?: string;
   interactive?: boolean;    // Whether ask_human tool is available
 }
