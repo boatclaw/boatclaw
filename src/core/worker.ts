@@ -871,8 +871,13 @@ export class Worker extends EventEmitter {
         }
       }
 
-      // Move card based on aggregated review results — all must pass
-      const allApproved = reviewResults.length > 0 && reviewResults.every(r => r.approved);
+      // Move card based on aggregated review results
+      // Empty results = nothing to review = auto-approve (e.g., documentation-only task)
+      const allApproved = reviewResults.length === 0 || reviewResults.every(r => r.approved);
+
+      if (reviewResults.length === 0) {
+        log.info('No reviewable changes found, auto-approving', { cardId: card.id });
+      }
 
       if (allApproved) {
         if (workflow.successId) {

@@ -6,7 +6,7 @@
  * - Local mode: reviews git diff from project path + agent comment on ticket
  */
 
-import { execSync } from 'child_process';
+import { spawn } from 'child_process';
 import { BoardProvider, Card } from '../platforms/types.js';
 import { AIProvider, Model } from '../ai/types.js';
 import { GitHubClient, ReviewComment, ChangedFile } from './client.js';
@@ -239,12 +239,52 @@ export class ReviewerAgent {
       // Validate baseBranch to prevent command injection
       const safeBranch = /^[a-zA-Z0-9._/-]+$/.test(baseBranch) ? baseBranch : 'main';
       try {
-        // First try diffing against the base branch (catches committed changes)
-        diff = execSync(`git diff ${safeBranch}...HEAD`, { cwd: projectPath, encoding: 'utf-8', maxBuffer: 10 * 1024 * 1024 });
+        // Get diff using async spawn instead of blocking execSync
+        diff = await new Promise<string>((resolve, reject) => {
+          const proc = spawn('git', ['diff', `${safeBranch}...HEAD`], {
+            cwd: projectPath,
+            stdio: ['ignore', 'pipe', 'pipe'],
+          });
+
+          let stdout = '';
+          let stderr = '';
+          proc.stdout.on('data', (data: Buffer) => { stdout += data.toString(); });
+          proc.stderr.on('data', (data: Buffer) => { stderr += data.toString(); });
+
+          proc.on('close', (code) => {
+            if (code === 0) {
+              resolve(stdout);
+            } else {
+              reject(new Error(`git diff failed: ${stderr}`));
+            }
+          });
+
+          proc.on('error', reject);
+        });
       } catch {
         // Fallback: try uncommitted changes only
         try {
-          diff = execSync('git diff', { cwd: projectPath, encoding: 'utf-8', maxBuffer: 10 * 1024 * 1024 });
+          diff = await new Promise<string>((resolve, reject) => {
+            const proc = spawn('git', ['diff'], {
+              cwd: projectPath,
+              stdio: ['ignore', 'pipe', 'pipe'],
+            });
+
+            let stdout = '';
+            let stderr = '';
+            proc.stdout.on('data', (data: Buffer) => { stdout += data.toString(); });
+            proc.stderr.on('data', (data: Buffer) => { stderr += data.toString(); });
+
+            proc.on('close', (code) => {
+              if (code === 0) {
+                resolve(stdout);
+              } else {
+                reject(new Error(`git diff failed: ${stderr}`));
+              }
+            });
+
+            proc.on('error', reject);
+          });
         } catch {
           // No git or no changes — might be an investigation task
         }
