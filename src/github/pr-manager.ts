@@ -230,8 +230,8 @@ export class PRManager {
   /**
    * Clean up after a task is complete
    */
-  async cleanupTask(taskId: string): Promise<void> {
-    await this.worktrees.removeWorktree(taskId);
+  async cleanupTask(taskId: string, options?: { keepRemoteBranch?: boolean }): Promise<void> {
+    await this.worktrees.removeWorktree(taskId, options);
   }
 
   /**
