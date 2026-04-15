@@ -127,7 +127,7 @@ function buildTaskSection(context: TaskContext): string {
 
   if (context.projectName) {
     section += `\n**Project:** ${context.projectName}`;
-    section += `\n\n> **IMPORTANT:** You are working ONLY on the "${context.projectName}" project. Focus exclusively on changes relevant to this project. Do not ask about or suggest changes for other projects — they will be handled separately.`;
+    section += `\n\n> **IMPORTANT:** You are working on the "${context.projectName}" project. If this task requires changes in this project — implement them, ask questions, do whatever is needed. If this task is NOT relevant to this project (e.g., a backend bug in a frontend repo), do NOT ask questions or suggest changes. Simply state "No changes needed in ${context.projectName}" with a brief reason, and complete immediately.`;
   }
 
   if (context.labels.length > 0) {
