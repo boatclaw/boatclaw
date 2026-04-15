@@ -343,20 +343,32 @@ export class JiraProvider implements BoardProvider {
    */
   async addComment(cardId: string, text: string): Promise<CardOperationResult> {
     try {
+      // Convert markdown text to ADF content blocks
+      const paragraphs = text.split(/\n\n+/).filter(p => p.trim());
+      const content = paragraphs.map(paragraph => {
+        // Strip markdown bold markers for cleaner ADF display
+        const cleanText = paragraph
+          .replace(/\*\*(.+?)\*\*/g, '$1')
+          .replace(/\*(.+?)\*/g, '$1')
+          .replace(/`(.+?)`/g, '$1');
+
+        return {
+          type: 'paragraph' as const,
+          content: [
+            {
+              type: 'text' as const,
+              text: cleanText.trim(),
+            },
+          ],
+        };
+      });
+
       await this.client.post(`/issue/${cardId}/comment`, {
         body: {
           type: 'doc',
           version: 1,
-          content: [
-            {
-              type: 'paragraph',
-              content: [
-                {
-                  type: 'text',
-                  text: text,
-                },
-              ],
-            },
+          content: content.length > 0 ? content : [
+            { type: 'paragraph', content: [{ type: 'text', text: text }] }
           ],
         },
       });

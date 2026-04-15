@@ -136,8 +136,15 @@ export class CursorProvider implements AIProvider {
         stderr += data.toString();
       });
 
+      let resolved = false;
+
       const timeoutId = setTimeout(() => {
+        resolved = true;
         proc.kill('SIGTERM');
+        // SIGKILL after 5s grace period if process doesn't exit
+        setTimeout(() => {
+          try { proc.kill('SIGKILL'); } catch { /* already dead */ }
+        }, 5000);
         resolve({
           success: false,
           output: stdout,
@@ -149,6 +156,8 @@ export class CursorProvider implements AIProvider {
 
       proc.on('close', (code) => {
         clearTimeout(timeoutId);
+        if (resolved) return;
+        resolved = true;
 
         const durationMs = Date.now() - startTime;
         const success = code === 0;
@@ -164,6 +173,8 @@ export class CursorProvider implements AIProvider {
 
       proc.on('error', (error) => {
         clearTimeout(timeoutId);
+        if (resolved) return;
+        resolved = true;
 
         resolve({
           success: false,

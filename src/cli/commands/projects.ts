@@ -17,6 +17,7 @@ import { existsSync } from 'fs';
 import { resolve, basename } from 'path';
 import * as ui from '../ui.js';
 import { selectPath, detectGitHubRepo, isGitRepo, getDefaultBranch } from '../prompts.js';
+import { isInitialized } from '../../core/paths.js';
 
 export function registerProjectsCommands(program: Command): void {
   const projects = program
@@ -111,8 +112,9 @@ function listProjects(): void {
       console.log('  ' + chalk.cyan(linePrefix) + '   GitHub   ' + chalk.white(project.github));
     }
     console.log('  ' + chalk.cyan(linePrefix) + '   Branch   ' + chalk.dim(project.baseBranch || 'main'));
-    if (project.context) {
-      console.log('  ' + chalk.cyan(linePrefix) + '   Context  ' + chalk.green('✓ Set'));
+    if (project.context || project.contextFile) {
+      const contextSource = project.context ? '✓ Set' : `✓ From file: ${project.contextFile}`;
+      console.log('  ' + chalk.cyan(linePrefix) + '   Context  ' + chalk.green(contextSource));
     }
 
     if (!isLast) console.log('  ' + chalk.cyan('│'));
@@ -132,6 +134,12 @@ async function addProject(options: {
   github?: string;
   context?: string;
 }): Promise<void> {
+  if (!isInitialized()) {
+    ui.error('Boatclaw is not configured.');
+    ui.info(`Run ${chalk.cyan('boatclaw setup')} first.`);
+    return;
+  }
+
   console.log();
   console.log(chalk.bold('Add Project'));
   console.log(chalk.dim('Add a repository for agents to work on.'));
@@ -328,7 +336,10 @@ function showProject(name: string): void {
 
   ui.keyValue('Path', project.path);
   ui.keyValue('GitHub', project.github || chalk.dim('Not configured'));
-  ui.keyValue('Context', project.context ? chalk.green('✓ Set') : chalk.dim('Not set'));
+  const projectContextText = project.context
+    ? chalk.green('✓ Set')
+    : (project.contextFile ? chalk.green(`✓ From file: ${project.contextFile}`) : chalk.dim('Not set'));
+  ui.keyValue('Context', projectContextText);
   ui.keyValue('Base Branch', project.baseBranch || 'main');
   ui.keyValue('Branch Prefix', project.branchPrefix || 'feature/');
 
@@ -353,7 +364,7 @@ function showProject(name: string): void {
     }
   }
 
-  // Show context if exists
+  // Show context if exists (inline or from file)
   if (project.context) {
     console.log();
     console.log(chalk.dim('Context:'));
@@ -366,12 +377,21 @@ function showProject(name: string): void {
       console.log(chalk.cyan('  │') + chalk.dim(' ... (truncated)'.padEnd(49)) + chalk.cyan('│'));
     }
     console.log(chalk.cyan('  └' + '─'.repeat(50) + '┘'));
+  } else if (project.contextFile) {
+    console.log();
+    console.log(chalk.dim(`Context from file: ${project.contextFile}`));
   }
 
   console.log();
 }
 
 async function editProjectContext(name: string): Promise<void> {
+  if (!isInitialized()) {
+    ui.error('Boatclaw is not configured.');
+    ui.info(`Run ${chalk.cyan('boatclaw setup')} first.`);
+    return;
+  }
+
   const project = configManager.getProject(name);
 
   if (!project) {

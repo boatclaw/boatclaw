@@ -134,6 +134,8 @@ export class PRManager {
   }): Promise<PRCreationResult> {
     const taskId = options.taskId || options.card.id;
 
+    let worktree: Worktree | null = null;
+
     try {
       // Check for changes
       const hasChanges = await this.worktrees.hasChanges(taskId);
@@ -146,7 +148,7 @@ export class PRManager {
       }
 
       // Get worktree
-      const worktree = await this.worktrees.getWorktree(taskId);
+      worktree = await this.worktrees.getWorktree(taskId);
       if (!worktree) {
         return {
           success: false,
@@ -196,13 +198,30 @@ export class PRManager {
         hasChanges: true,
       };
     } catch (error) {
+      // If PR already exists for this branch (422), find and return it
+      if (error instanceof Error && 'status' in error && (error as { status: number }).status === 422) {
+        try {
+          const existingPR = await this.findPRForBranch(worktree!.branch);
+          if (existingPR) {
+            return {
+              success: true,
+              pr: existingPR,
+              worktree: worktree!,
+              hasChanges: true,
+            };
+          }
+        } catch {
+          // Fall through to error return
+        }
+      }
+
       const errorMessage =
         error instanceof Error ? error.message : String(error);
 
       return {
         success: false,
         error: errorMessage,
-        hasChanges: false,
+        hasChanges: true, // Changes exist, PR creation just failed
       };
     }
   }

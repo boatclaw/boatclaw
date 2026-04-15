@@ -70,7 +70,7 @@ export interface ProjectProcessingNotification {
   error?: string;
   prUrl?: string;
   prNumber?: number;
-  output?: string;
+  output: string;
 }
 
 /**
@@ -82,8 +82,10 @@ export type TaskProcessor = (
   card: Card,
   role: RoleConfig,
   projects: ProjectConfig[],
-  onProjectComplete?: (result: ProjectProcessingNotification) => void,
+  onProjectComplete?: (result: ProjectProcessingNotification) => Promise<void> | void,
   cardComments?: string,
+  fetchComments?: (cardId: string) => Promise<string | undefined>,
+  postComment?: (cardId: string, text: string) => Promise<void>,
 ) => Promise<{
   success: boolean;
   output: string;
@@ -110,7 +112,7 @@ export interface WorkerOptions {
 /**
  * Default task processor (placeholder until AI is implemented).
  */
-const defaultTaskProcessor: TaskProcessor = async (card, role, projects) => {
+const defaultTaskProcessor: TaskProcessor = async (card, role, projects, _onProjectComplete, _cardComments, _fetchComments, _postComment) => {
   // Simulate processing time
   await new Promise((resolve) => setTimeout(resolve, 1000));
 
@@ -212,8 +214,16 @@ export class Worker extends EventEmitter {
       this.pollTimer = null;
     }
 
-    // Wait for in-progress tasks and reviews to complete
+    // Wait for in-progress tasks and reviews to complete (with 5-minute timeout)
+    const stopDeadline = Date.now() + 5 * 60 * 1000;
     while (this.processingCards.size > 0 || this.reviewingCards.size > 0) {
+      if (Date.now() > stopDeadline) {
+        log.warn('Stop timeout reached, forcing shutdown', {
+          pendingTasks: this.processingCards.size,
+          pendingReviews: this.reviewingCards.size,
+        });
+        break;
+      }
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
 
@@ -249,8 +259,10 @@ export class Worker extends EventEmitter {
           break;
         }
 
-        // Process task
-        this.processTask(card, role, projects);
+        // Process task (fire-and-forget with error handling)
+        this.processTask(card, role, projects).catch(err => {
+          this.emit('error', err instanceof Error ? err : new Error(String(err)));
+        });
       }
 
       // Also check review list for cards that need automated review
@@ -380,7 +392,16 @@ export class Worker extends EventEmitter {
         await this.moveCardToWorking(card, workflow);
       }
 
-      // Add started comment with projects info
+      // Fetch card comments for context (human discussion, follow-ups)
+      // Done BEFORE the started comment so planning can use them
+      let cardComments: string | undefined;
+      try {
+        cardComments = await this.fetchHumanComments(card.id);
+      } catch {
+        // Ignore comment fetch errors — not critical
+      }
+
+      // Add started comment
       if (!this.dryRun) {
         const projectList = projects.map(p => `- ${p.name}`).join('\n');
         await this.provider.addComment(
@@ -389,32 +410,8 @@ export class Worker extends EventEmitter {
         );
       }
 
-      // Fetch card comments for context (human discussion, follow-ups)
-      let cardComments: string | undefined;
-      try {
-        const comments = await this.provider.getComments(card.id);
-        const humanComments = comments.filter(c => {
-          const t = c.text;
-          return !t.includes('**Boatclaw') &&
-            !t.includes('**Task completed') &&
-            !t.includes('**Task failed') &&
-            !t.includes('**Code review') &&
-            !t.includes('**Review passed') &&
-            !t.includes('**Review found') &&
-            !t.includes('**Automated review');
-        });
-        if (humanComments.length > 0) {
-          cardComments = humanComments
-            .map(c => `**${c.authorName}** (${c.createdAt.toISOString().split('T')[0]}):\n${c.text}`)
-            .join('\n\n---\n\n')
-            .slice(0, 5000);
-        }
-      } catch {
-        // Ignore comment fetch errors — not critical
-      }
-
       // Execute task across all projects, posting per-project updates
-      const processingResult = await this.taskProcessor(card, role, projects, (projectResult) => {
+      const processingResult = await this.taskProcessor(card, role, projects, async (projectResult) => {
         if (!this.dryRun && projects.length > 1) {
           const status = projectResult.success ? '✅' : '❌';
           let msg = `${status} **${projectResult.projectName}** — ${projectResult.success ? 'completed' : 'failed'}`;
@@ -424,16 +421,27 @@ export class Worker extends EventEmitter {
           if (projectResult.error) {
             msg += `\n> ${projectResult.error}`;
           }
-          // Include structured summary if available
+          // Include structured summary or brief output snippet
           if (projectResult.output) {
-            const summaryMatch = projectResult.output.match(/\*\*What was done:\*\*[\s\S]*?^---$/m);
-            if (summaryMatch) {
-              msg += `\n\n${summaryMatch[0].trim()}`;
+            const summaryMatch = projectResult.output.match(/<!-- BOATCLAW_SUMMARY_START -->([\s\S]*?)<!-- BOATCLAW_SUMMARY_END -->/);
+            const legacyMatch = projectResult.output.match(/\*\*What was done:?\*\*[\s\S]*?^---$/im);
+            const match = summaryMatch || legacyMatch;
+            if (match) {
+              msg += `\n\n${(summaryMatch ? summaryMatch[1] : match[0]).trim()}`;
+            } else {
+              const lines = projectResult.output.split('\n').filter(l => l.trim()).slice(-5);
+              if (lines.length > 0) {
+                msg += `\n\n**Output:**\n${lines.join('\n').slice(0, 500)}`;
+              }
             }
           }
-          this.provider.addComment(card.id, msg).catch(() => {});
+          try {
+            await this.provider.addComment(card.id, msg);
+          } catch {
+            log.debug('Failed to post per-project update', { cardId: card.id, project: projectResult.projectName });
+          }
         }
-      }, cardComments);
+      }, cardComments, (cardId) => this.fetchHumanComments(cardId), async (cardId, text) => { await this.provider.addComment(cardId, text); });
 
       // Collect all PR URLs
       const prUrls = processingResult.projectResults
@@ -518,8 +526,46 @@ export class Worker extends EventEmitter {
     workflow: WorkflowConfig
   ): Promise<void> {
     if (workflow.workingId) {
-      await this.provider.moveCard(card.id, workflow.workingId);
+      const result = await this.provider.moveCard(card.id, workflow.workingId);
+      if (!result.success) {
+        throw new Error(`Failed to move card to working list: ${result.error || 'unknown error'}`);
+      }
     }
+  }
+
+  /**
+   * Check if a comment is from a human (not a bot/system comment).
+   */
+  private isHumanComment(text: string): boolean {
+    return !text.includes('**Boatclaw') &&
+      !text.includes('**Task completed') &&
+      !text.includes('**Task failed') &&
+      !text.includes('**Code review') &&
+      !text.includes('**Review passed') &&
+      !text.includes('**Review found') &&
+      !text.includes('**Automated review') &&
+      !text.startsWith('✅ **') &&
+      !text.startsWith('❌ **') &&
+      !text.includes('**Planning complete**') &&
+      !text.includes('**Aborting remaining projects**') &&
+      !text.includes('<!-- BOATCLAW_PLANNED_PROJECTS:') &&
+      // MCP interactive mode comments
+      !text.includes('Question from AI:') &&
+      !text.includes('**AI Update:**');
+  }
+
+  /**
+   * Fetch human comments from a card, filtering out bot comments.
+   * Returns formatted string or undefined if no human comments.
+   */
+  private async fetchHumanComments(cardId: string): Promise<string | undefined> {
+    const comments = await this.provider.getComments(cardId);
+    const humanComments = comments.filter(c => this.isHumanComment(c.text));
+    if (humanComments.length === 0) return undefined;
+    return humanComments
+      .map(c => `**${c.authorName}** (${c.createdAt.toISOString().split('T')[0]}):\n${c.text}`)
+      .join('\n\n---\n\n')
+      .slice(0, 5000);
   }
 
   /**
@@ -568,6 +614,10 @@ export class Worker extends EventEmitter {
       if (prLinks) {
         parts.push(`🔗 **Pull Requests:**\n${prLinks}`);
       }
+
+      // Add planned projects marker for review phase (machine-readable)
+      const plannedNames = projectResults.map(r => r.projectName).join(',');
+      parts.push(`<!-- BOATCLAW_PLANNED_PROJECTS:${plannedNames} -->`);
     } else if (prUrl) {
       parts.push(`🔗 **Pull Request:** ${prUrl}`);
     }
@@ -575,13 +625,22 @@ export class Worker extends EventEmitter {
     // Add role info
     parts.push(`_Processed by agent **${role.name}**_`);
 
-    await this.provider.addComment(card.id, parts.join('\n\n'));
+    const commentResult = await this.provider.addComment(card.id, parts.join('\n\n'));
+    if (!commentResult.success) {
+      log.warn('Failed to post success comment', { cardId: card.id, error: commentResult.error });
+    }
 
     // Always move to review list first if configured — reviewer will move to success/failed
     if (workflow.reviewId) {
-      await this.provider.moveCard(card.id, workflow.reviewId);
+      const moveResult = await this.provider.moveCard(card.id, workflow.reviewId);
+      if (!moveResult.success) {
+        log.warn('Failed to move card to review list', { cardId: card.id, error: moveResult.error });
+      }
     } else if (workflow.successId) {
-      await this.provider.moveCard(card.id, workflow.successId);
+      const moveResult = await this.provider.moveCard(card.id, workflow.successId);
+      if (!moveResult.success) {
+        log.warn('Failed to move card to success list', { cardId: card.id, error: moveResult.error });
+      }
     }
   }
 
@@ -616,12 +675,18 @@ export class Worker extends EventEmitter {
 
     parts.push(`_Processed by agent **${role.name}**_`);
 
-    await this.provider.addComment(card.id, parts.join('\n\n'));
+    const commentResult = await this.provider.addComment(card.id, parts.join('\n\n'));
+    if (!commentResult.success) {
+      log.warn('Failed to post failure comment', { cardId: card.id, error: commentResult.error });
+    }
 
     // Move to failed list if configured, otherwise back to trigger
     const targetList = workflow.failedId || workflow.triggerId;
     if (targetList) {
-      await this.provider.moveCard(card.id, targetList);
+      const moveResult = await this.provider.moveCard(card.id, targetList);
+      if (!moveResult.success) {
+        log.warn('Failed to move card to failed/trigger list', { cardId: card.id, error: moveResult.error });
+      }
     }
   }
 
@@ -644,6 +709,9 @@ export class Worker extends EventEmitter {
       for (const card of cards) {
         if (this.shouldStop) break;
         if (this.reviewingCards.has(card.id)) continue;
+
+        // Limit parallel reviews (same limit as tasks)
+        if (this.reviewingCards.size >= this.maxParallelTasks) break;
 
         // Only review cards that have a matching agent label
         const cardLabels = card.labels.map(l => l.name.toLowerCase());
@@ -692,16 +760,7 @@ export class Worker extends EventEmitter {
       const prComment = comments.find(c => c.text?.includes('**Pull Requests:**') || c.text?.includes('**Pull Request:**'));
 
       // Format all non-bot comments for review context
-      const humanComments = comments.filter(c => {
-          const t = c.text;
-          return !t.includes('**Boatclaw') &&
-            !t.includes('**Task completed') &&
-            !t.includes('**Task failed') &&
-            !t.includes('**Code review') &&
-            !t.includes('**Review passed') &&
-            !t.includes('**Review found') &&
-            !t.includes('**Automated review');
-        });
+      const humanComments = comments.filter(c => this.isHumanComment(c.text));
       const ticketComments = humanComments.length > 0
         ? humanComments.map(c => `**${c.authorName}** (${c.createdAt.toISOString().split('T')[0]}):\n${c.text}`).join('\n\n---\n\n').slice(0, 5000)
         : undefined;
@@ -712,6 +771,15 @@ export class Worker extends EventEmitter {
         c.text?.includes('**Task failed**')
       );
 
+      // Extract planned projects from the completion comment (if planner was used)
+      let plannedProjectNames: string[] | null = null;
+      if (agentCompletionComment?.text) {
+        const plannedMatch = agentCompletionComment.text.match(/<!-- BOATCLAW_PLANNED_PROJECTS:(.+?) -->/);
+        if (plannedMatch) {
+          plannedProjectNames = plannedMatch[1].split(',').map(n => n.trim());
+        }
+      }
+
       // Collect all review results — move card only after all reviews complete
       const reviewResults: { name: string; approved: boolean }[] = [];
 
@@ -720,8 +788,17 @@ export class Worker extends EventEmitter {
       const prList = allPrMatches ? [...allPrMatches].map(m => ({ repo: m[1], prNumber: parseInt(m[2], 10) })) : [];
 
       if (prList.length > 0 && this.githubToken) {
+        // Filter PRs to only planned projects if planner was used
+        let prsToReview = prList;
+        if (plannedProjectNames) {
+          prsToReview = prList.filter(pr => {
+            const prProject = Object.values(config.projects).find(p => p.github === pr.repo);
+            return !prProject || plannedProjectNames!.some(name => name.toLowerCase() === prProject.name.toLowerCase());
+          });
+        }
+
         // GitHub mode: review each PR separately with error isolation
-        for (const pr of prList) {
+        for (const pr of prsToReview) {
           try {
             const prProject = Object.values(config.projects).find(p => p.github === pr.repo);
 
@@ -755,7 +832,14 @@ export class Worker extends EventEmitter {
         }
       } else {
         // Local mode: review each project's changes with error isolation
-        const projectsToReview = roleProjects.length > 0 ? roleProjects : (project ? [project] : []);
+        let projectsToReview = roleProjects.length > 0 ? roleProjects : (project ? [project] : []);
+
+        // Filter to only planned projects if planner was used
+        if (plannedProjectNames) {
+          projectsToReview = projectsToReview.filter(p =>
+            plannedProjectNames!.some(name => name.toLowerCase() === p.name.toLowerCase())
+          );
+        }
 
         for (const proj of projectsToReview) {
           try {
@@ -787,8 +871,13 @@ export class Worker extends EventEmitter {
         }
       }
 
-      // Move card based on aggregated review results — all must pass
-      const allApproved = reviewResults.length > 0 && reviewResults.every(r => r.approved);
+      // Move card based on aggregated review results
+      // Empty results = nothing to review = auto-approve (e.g., documentation-only task)
+      const allApproved = reviewResults.length === 0 || reviewResults.every(r => r.approved);
+
+      if (reviewResults.length === 0) {
+        log.info('No reviewable changes found, auto-approving', { cardId: card.id });
+      }
 
       if (allApproved) {
         if (workflow.successId) {

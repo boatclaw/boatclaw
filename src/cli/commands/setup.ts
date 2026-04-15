@@ -1285,10 +1285,15 @@ async function setupGitHub(): Promise<void> {
       mask: '*',
       validate: (input: string) => {
         if (!input) return 'Token is required for GitHub integration';
-        if (!input.startsWith('ghp_') && !input.startsWith('github_pat_')) {
-          return 'Token should start with ghp_ or github_pat_';
+        // Accept common GitHub token prefixes
+        if (input.startsWith('ghp_') || input.startsWith('github_pat_') || input.startsWith('ghs_') || input.startsWith('gho_') || input.startsWith('ghu_')) {
+          return true;
         }
-        return true;
+        // Also accept tokens without known prefixes (some integrations use custom formats)
+        if (input.length >= 20) {
+          return true;
+        }
+        return 'Token should be a valid GitHub personal access token, fine-grained token, or app token';
       },
     },
   ]);

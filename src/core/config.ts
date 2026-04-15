@@ -109,6 +109,8 @@ export const AIConfigSchema = z.object({
   provider: AIProviderSchema.default('claude'),
   availableProviders: z.array(AIProviderSchema).optional(),
   defaultModel: ModelSchema.default('auto'),
+  /** Model used for the planning phase in multi-project tasks */
+  plannerModel: ModelSchema.default('haiku'),
   apiKey: z.string().optional(),
   timeoutSeconds: z.number().default(1800),
   /** Enable interactive mode (ask_human) - only works with Claude Code */
@@ -170,8 +172,11 @@ export class ConfigManager {
       const data = yaml.load(content) || {};
       this.config = BoatclawConfigSchema.parse(data);
       return this.config;
-    } catch {
-      // If parsing fails, return defaults
+    } catch (error) {
+      // Log warning so user knows their config is broken, then return defaults
+      const msg = error instanceof Error ? error.message : String(error);
+      console.error(`[boatclaw] Warning: Failed to parse config file (${CONFIG_FILE}): ${msg}`);
+      console.error('[boatclaw] Using default configuration. Run "boatclaw setup" to fix.');
       this.config = BoatclawConfigSchema.parse({});
       return this.config;
     }
@@ -230,7 +235,18 @@ export class ConfigManager {
     }
 
     obj[keys[keys.length - 1]] = value;
-    this.save(config);
+
+    // Re-validate through Zod to catch invalid values
+    try {
+      this.config = BoatclawConfigSchema.parse(config);
+    } catch (error) {
+      // Revert the change
+      this.config = null; // Force reload from file on next access
+      const msg = error instanceof Error ? error.message : String(error);
+      throw new Error(`Invalid config value for "${path}": ${msg}`);
+    }
+
+    this.save(this.config);
   }
 
   /**
@@ -376,7 +392,11 @@ export class ConfigManager {
     const normalizedLabels = labels.map(l => l.toLowerCase());
 
     for (const role of roles) {
+      // Check both current `labels` array and legacy `label` field
       const roleLabels = role.labels.map(l => l.toLowerCase());
+      if (role.label) {
+        roleLabels.push(role.label.toLowerCase());
+      }
       // Check if any of the card's labels match this role's labels
       if (normalizedLabels.some(label => roleLabels.includes(label))) {
         return role;

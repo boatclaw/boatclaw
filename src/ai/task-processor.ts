@@ -17,6 +17,7 @@ import { GitHubClient } from '../github/client.js';
 import { WorktreeManager } from '../github/worktree.js';
 import { aiLogger as log } from '../core/logger.js';
 import { ProjectResult } from '../core/worker.js';
+import { planTask, TaskPlan } from './planner.js';
 
 /**
  * Single project processing result.
@@ -42,6 +43,7 @@ export interface TaskProcessingResult {
   summary?: string;
   error?: string;
   durationMs: number;
+  plan?: TaskPlan;
   projectResults: ProjectProcessingResult[];
 }
 
@@ -57,7 +59,7 @@ export interface TaskProcessorOptions {
   /** Enable interactive mode (ask_human) - only works with Claude */
   interactive?: boolean;
   /** Called after each project completes in multi-project tasks */
-  onProjectComplete?: (result: ProjectProcessingResult) => void;
+  onProjectComplete?: (result: ProjectProcessingResult) => Promise<void> | void;
 }
 
 /**
@@ -151,7 +153,10 @@ export class TaskProcessor {
       additionalInstructions?: string;
       cardComments?: string;
       dryRun?: boolean;
-      onProjectComplete?: (result: ProjectProcessingResult) => void;
+      fetchComments?: (cardId: string) => Promise<string | undefined>;
+      /** Post a comment to the ticket (for plan updates, etc.) */
+      postComment?: (cardId: string, text: string) => Promise<void>;
+      onProjectComplete?: (result: ProjectProcessingResult) => Promise<void> | void;
     }
   ): Promise<TaskProcessingResult> {
     const startTime = Date.now();
@@ -166,28 +171,157 @@ export class TaskProcessor {
       role: role.name,
     });
 
-    for (const project of projects) {
+    // Planning phase — decide which projects need changes and in what order
+    let plan: TaskPlan | undefined;
+    let projectsToProcess = projects;
+
+    if (projects.length > 1) {
+      const config = configManager.load();
+      plan = await planTask(card, role, projects, this.baseProvider, options?.cardComments, config.ai.plannerModel);
+
+      // Filter and reorder projects based on plan
+      const plannedProjects = plan.projects
+        .map(name => projects.find(p => p.name.toLowerCase() === name.toLowerCase()))
+        .filter((p): p is ProjectConfig => p !== undefined);
+
+      if (plannedProjects.length > 0) {
+        projectsToProcess = plannedProjects;
+        log.info('Planning decided', {
+          scope: plan.scope,
+          projects: plan.projects.join(', '),
+          reasoning: plan.reasoning,
+          skipped: projects.filter(p => !plan!.projects.some(pp => pp.toLowerCase() === p.name.toLowerCase())).map(p => p.name).join(', ') || 'none',
+        });
+      }
+    }
+
+    // Post plan decision to ticket for transparency
+    if (plan && options?.postComment) {
+      const skipped = projects
+        .filter(p => !plan!.projects.some(pp => pp.toLowerCase() === p.name.toLowerCase()))
+        .map(p => p.name);
+
+      let planMsg = `📋 **Planning complete**\n\n**Scope:** ${plan.scope}\n**Order:** ${plan.projects.join(' → ')}`;
+      if (skipped.length > 0) {
+        planMsg += `\n**Skipped:** ${skipped.join(', ')}`;
+      }
+      if (plan.sharedContracts) {
+        planMsg += `\n**Shared contracts:** Yes — will abort remaining projects if a dependency fails`;
+      }
+      planMsg += `\n**Reasoning:** ${plan.reasoning}`;
+      if (plan.executionNotes) {
+        planMsg += `\n**Notes:** ${plan.executionNotes}`;
+      }
+
+      try {
+        await options.postComment(card.id, planMsg);
+      } catch {
+        log.debug('Failed to post plan comment', { cardId: card.id });
+      }
+    }
+
+    // Track previous project results for cross-project context
+    const previousResults: { name: string; summary: string }[] = [];
+
+    for (const project of projectsToProcess) {
       log.info(`Processing project: ${project.name}`, { cardId: card.id });
+
+      // Re-fetch comments before each project session to include updates from previous projects
+      let currentComments = options?.cardComments;
+      if (options?.fetchComments && previousResults.length > 0) {
+        try {
+          const freshComments = await options.fetchComments(card.id);
+          if (freshComments) {
+            currentComments = freshComments;
+          }
+        } catch {
+          log.debug('Failed to re-fetch comments, using existing', { cardId: card.id });
+        }
+      }
+
+      // Build instructions with plan context + previous project results
+      const instructionParts: string[] = [];
+
+      if (options?.additionalInstructions) {
+        instructionParts.push(options.additionalInstructions);
+      }
+
+      if (plan?.scope === 'cross-project') {
+        instructionParts.push(`This is a cross-project task. Projects involved: ${plan.projects.join(', ')}.`);
+      }
+      if (plan?.sharedContracts) {
+        instructionParts.push('Shared contracts/APIs/schemas are involved — ensure compatibility.');
+      }
+      if (plan?.executionNotes) {
+        instructionParts.push(plan.executionNotes);
+      }
+
+      // Pass previous project results so the AI knows what was already done
+      if (previousResults.length > 0) {
+        const prevContext = previousResults
+          .map(r => `**${r.name}** completed:\n${r.summary}`)
+          .join('\n\n');
+        instructionParts.push(`## Changes already made in other projects\n\nThe following projects were already processed for this task. Use this information to ensure your changes are compatible:\n\n${prevContext}`);
+      }
+
+      const planInstructions = instructionParts.length > 0 ? instructionParts.join('\n\n') : undefined;
 
       const projectResult = await this.processProject(
         card,
         role,
         project,
-        options
+        { ...options, additionalInstructions: planInstructions, cardComments: currentComments }
       );
 
       projectResults.push(projectResult);
       outputs.push(`## ${project.name}\n${projectResult.output}`);
 
+      // Track result for next project's context — use generous summary for cross-project
+      if (projectResult.success) {
+        // Try tagged delimiters first, then legacy regex, then fallback
+        const taggedMatch = projectResult.output.match(/<!-- BOATCLAW_SUMMARY_START -->([\s\S]*?)<!-- BOATCLAW_SUMMARY_END -->/);
+        const legacyMatch = projectResult.output.match(/\*\*What was done:?\*\*[\s\S]*?^---$/im);
+        const summary = taggedMatch
+          ? taggedMatch[1].trim()
+          : legacyMatch
+            ? legacyMatch[0].trim()
+            : projectResult.output.slice(-2000).trim();
+        previousResults.push({ name: project.name, summary });
+      }
+
       // Notify caller after each project completes
       if (options?.onProjectComplete) {
-        options.onProjectComplete(projectResult);
+        await options.onProjectComplete(projectResult);
       }
 
       if (projectResult.success) {
         hasAnySuccess = true;
       } else {
         hasAnyFailure = true;
+
+        // Abort remaining projects if this is a cross-project task with shared contracts
+        if (plan?.scope === 'cross-project' && plan?.sharedContracts) {
+          const currentIndex = projectsToProcess.indexOf(project);
+          const remaining = projectsToProcess.slice(currentIndex + 1).map(p => p.name);
+
+          if (remaining.length > 0) {
+            log.warn('Aborting remaining projects due to dependency failure', {
+              failedProject: project.name,
+              remainingProjects: remaining.join(', '),
+            });
+
+            if (options?.postComment) {
+              try {
+                await options.postComment(card.id,
+                  `⚠️ **Aborting remaining projects** (${remaining.join(', ')})\n\n` +
+                  `**${project.name}** failed and has shared contracts with downstream projects. ` +
+                  `Continuing would produce incompatible changes.`
+                );
+              } catch { /* ignore */ }
+            }
+          }
+          break;
+        }
       }
     }
 
@@ -202,6 +336,7 @@ export class TaskProcessor {
       success: overallSuccess,
       output: fullOutput,
       summary: this.extractSummary(fullOutput),
+      plan,
       error: hasAnyFailure
         ? projectResults
             .filter(r => !r.success)
@@ -370,8 +505,14 @@ export class TaskProcessor {
    * Extract a structured summary from AI output.
    */
   private extractSummary(output: string): string {
-    // Try to extract the structured completion summary
-    const structuredMatch = output.match(/\*\*What was done:\*\*[\s\S]*?^---$/m);
+    // Try tagged delimiters first
+    const taggedMatch = output.match(/<!-- BOATCLAW_SUMMARY_START -->([\s\S]*?)<!-- BOATCLAW_SUMMARY_END -->/);
+    if (taggedMatch) {
+      return taggedMatch[1].trim().slice(0, 2000);
+    }
+
+    // Legacy: try structured completion summary
+    const structuredMatch = output.match(/\*\*What was done:?\*\*[\s\S]*?^---$/im);
     if (structuredMatch) {
       return structuredMatch[0].trim().slice(0, 2000);
     }
@@ -429,20 +570,26 @@ export function createTaskProcessorFunction(
   card: Card,
   role: RoleConfig,
   projects: ProjectConfig[],
-  onProjectComplete?: (result: { projectName: string; success: boolean; error?: string; prUrl?: string; prNumber?: number; output?: string }) => void,
+  onProjectComplete?: (result: { projectName: string; success: boolean; error?: string; prUrl?: string; prNumber?: number; output: string }) => Promise<void> | void,
   cardComments?: string,
+  fetchComments?: (cardId: string) => Promise<string | undefined>,
+  postComment?: (cardId: string, text: string) => Promise<void>,
 ) => Promise<{
   success: boolean;
   output: string;
+  summary?: string;
   error?: string;
   projectResults?: ProjectResult[];
 }> {
   const processor = new TaskProcessor(options);
 
-  return async (card, role, projects, onProjectComplete, cardComments) => {
+  return async (card, role, projects, onProjectComplete, cardComments, fetchComments, postComment) => {
     const result = await processor.processMultiProject(card, role, projects, {
+      additionalInstructions: options?.additionalInstructions,
       dryRun: options?.dryRun,
       cardComments,
+      fetchComments,
+      postComment,
       onProjectComplete: onProjectComplete || options?.onProjectComplete,
     });
 

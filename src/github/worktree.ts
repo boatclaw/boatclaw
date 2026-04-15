@@ -177,12 +177,28 @@ export class WorktreeManager {
       return true;
     }
 
+    // Get branch name before removing worktree
+    const branchResult = await this.runGit(
+      ['rev-parse', '--abbrev-ref', 'HEAD'],
+      worktreePath
+    );
+    const worktree = branchResult.code === 0 ? { branch: branchResult.stdout } : null;
+
     // Remove from git
     await this.runGit(['worktree', 'remove', worktreePath, '--force']);
 
     // Clean up directory if still exists
     if (existsSync(worktreePath)) {
       rmSync(worktreePath, { recursive: true, force: true });
+    }
+
+    // Try to delete the remote branch (best effort)
+    if (worktree) {
+      try {
+        await this.runGit(['push', 'origin', '--delete', worktree.branch], this.mainRepoPath);
+      } catch {
+        // Ignore — branch may not have been pushed, or remote may not exist
+      }
     }
 
     return true;
