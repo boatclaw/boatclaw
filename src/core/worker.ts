@@ -705,61 +705,95 @@ export class Worker extends EventEmitter {
         c.text?.includes('**Task failed**')
       );
 
+      // Collect all review results — move card only after all reviews complete
+      const reviewResults: { name: string; approved: boolean }[] = [];
+
       // Find ALL PR URLs in comments (multi-project tasks have multiple PRs)
       const allPrMatches = prComment?.text?.matchAll(/github\.com\/([^/]+\/[^/]+)\/pull\/(\d+)/g);
       const prList = allPrMatches ? [...allPrMatches].map(m => ({ repo: m[1], prNumber: parseInt(m[2], 10) })) : [];
 
       if (prList.length > 0 && this.githubToken) {
-        // GitHub mode: review each PR
+        // GitHub mode: review each PR separately with error isolation
         for (const pr of prList) {
-          const prProject = Object.values(config.projects).find(p => p.github === pr.repo);
+          try {
+            const prProject = Object.values(config.projects).find(p => p.github === pr.repo);
 
-          const githubClient = new GitHubClient({ token: this.githubToken, defaultRepo: pr.repo });
-          const reviewer = createReviewerAgent({
-            boardProvider: this.provider,
-            aiProvider,
-            githubClient,
-            workflow,
-          });
+            const githubClient = new GitHubClient({ token: this.githubToken, defaultRepo: pr.repo });
+            const reviewer = createReviewerAgent({
+              boardProvider: this.provider,
+              aiProvider,
+              githubClient,
+              workflow,
+            });
 
-          log.info('Starting PR review', { cardId: card.id, prNumber: pr.prNumber, repo: pr.repo });
+            log.info('Starting PR review', { cardId: card.id, prNumber: pr.prNumber, repo: pr.repo });
 
-          await reviewer.processCardForReview({
-            card,
-            prNumber: pr.prNumber,
-            repo: pr.repo,
-            projectContext: prProject?.context || projectContext,
-            agentContext,
-            ticketComments,
-            agentComment: agentCompletionComment?.text,
-          });
+            const result = await reviewer.processCardForReview({
+              card,
+              prNumber: pr.prNumber,
+              repo: pr.repo,
+              projectContext: prProject?.context || projectContext,
+              agentContext,
+              ticketComments,
+              agentComment: agentCompletionComment?.text,
+            });
+
+            reviewResults.push({ name: pr.repo, approved: result.approved });
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            log.error('PR review failed', { cardId: card.id, prNumber: pr.prNumber, error: msg });
+            await this.provider.addComment(card.id, `⚠️ **Review failed for PR #${pr.prNumber}:** ${msg}`);
+            reviewResults.push({ name: pr.repo, approved: false });
+          }
         }
       } else {
-        // Local mode: review each project's changes
+        // Local mode: review each project's changes with error isolation
         const projectsToReview = roleProjects.length > 0 ? roleProjects : (project ? [project] : []);
 
         for (const proj of projectsToReview) {
-          const reviewer = createReviewerAgent({
-            boardProvider: this.provider,
-            aiProvider,
-            workflow,
-          });
+          try {
+            const reviewer = createReviewerAgent({
+              boardProvider: this.provider,
+              aiProvider,
+              workflow,
+            });
 
-          log.info('Starting local review', { cardId: card.id, project: proj.name });
+            log.info('Starting local review', { cardId: card.id, project: proj.name });
 
-          await reviewer.processCardForLocalReview({
-            card,
-            projectPath: proj.path || process.cwd(),
-            baseBranch: proj.baseBranch || 'main',
-            projectContext: proj.context || projectContext,
-            agentContext,
-            agentComment: agentCompletionComment?.text,
-            ticketComments,
-          });
+            const result = await reviewer.processCardForLocalReview({
+              card,
+              projectPath: proj.path || process.cwd(),
+              baseBranch: proj.baseBranch || 'main',
+              projectContext: proj.context || projectContext,
+              agentContext,
+              agentComment: agentCompletionComment?.text,
+              ticketComments,
+            });
+
+            reviewResults.push({ name: proj.name, approved: result.approved });
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            log.error('Local review failed', { cardId: card.id, project: proj.name, error: msg });
+            await this.provider.addComment(card.id, `⚠️ **Review failed for ${proj.name}:** ${msg}`);
+            reviewResults.push({ name: proj.name, approved: false });
+          }
         }
       }
 
-      log.info('Review completed', { cardId: card.id });
+      // Move card based on aggregated review results — all must pass
+      const allApproved = reviewResults.length > 0 && reviewResults.every(r => r.approved);
+
+      if (allApproved) {
+        if (workflow.successId) {
+          await this.provider.moveCard(card.id, workflow.successId);
+        }
+      } else {
+        if (workflow.failedId) {
+          await this.provider.moveCard(card.id, workflow.failedId);
+        }
+      }
+
+      log.info('Review completed', { cardId: card.id, allApproved, results: reviewResults });
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       log.error('Review failed', { cardId: card.id, error: msg });
