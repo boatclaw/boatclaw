@@ -424,6 +424,13 @@ export class Worker extends EventEmitter {
           if (projectResult.error) {
             msg += `\n> ${projectResult.error}`;
           }
+          // Include structured summary if available
+          if (projectResult.output) {
+            const summaryMatch = projectResult.output.match(/\*\*What was done:\*\*[\s\S]*?^---$/m);
+            if (summaryMatch) {
+              msg += `\n\n${summaryMatch[0].trim()}`;
+            }
+          }
           this.provider.addComment(card.id, msg).catch(() => {});
         }
       }, cardComments);
