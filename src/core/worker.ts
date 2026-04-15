@@ -83,9 +83,11 @@ export type TaskProcessor = (
   role: RoleConfig,
   projects: ProjectConfig[],
   onProjectComplete?: (result: ProjectProcessingNotification) => void,
+  cardComments?: string,
 ) => Promise<{
   success: boolean;
   output: string;
+  summary?: string;
   error?: string;
   projectResults?: ProjectResult[];
 }>;
@@ -322,6 +324,13 @@ export class Worker extends EventEmitter {
 
       if (engineerProjects.length > 0) {
         result.push({ card, role: matchingRole, projects: engineerProjects });
+      } else {
+        log.warn('Agent matched but has no valid projects', {
+          cardId: card.id,
+          cardTitle: card.title,
+          agent: matchingRole.name,
+          configuredProjects: matchingRole.projects,
+        });
       }
     }
 
@@ -380,6 +389,30 @@ export class Worker extends EventEmitter {
         );
       }
 
+      // Fetch card comments for context (human discussion, follow-ups)
+      let cardComments: string | undefined;
+      try {
+        const comments = await this.provider.getComments(card.id);
+        const humanComments = comments.filter(c => {
+          const t = c.text;
+          return !t.includes('**Boatclaw') &&
+            !t.includes('**Task completed') &&
+            !t.includes('**Task failed') &&
+            !t.includes('**Code review') &&
+            !t.includes('**Review passed') &&
+            !t.includes('**Review found') &&
+            !t.includes('**Automated review');
+        });
+        if (humanComments.length > 0) {
+          cardComments = humanComments
+            .map(c => `**${c.authorName}** (${c.createdAt.toISOString().split('T')[0]}):\n${c.text}`)
+            .join('\n\n---\n\n')
+            .slice(0, 5000);
+        }
+      } catch {
+        // Ignore comment fetch errors — not critical
+      }
+
       // Execute task across all projects, posting per-project updates
       const processingResult = await this.taskProcessor(card, role, projects, (projectResult) => {
         if (!this.dryRun && projects.length > 1) {
@@ -393,7 +426,7 @@ export class Worker extends EventEmitter {
           }
           this.provider.addComment(card.id, msg).catch(() => {});
         }
-      });
+      }, cardComments);
 
       // Collect all PR URLs
       const prUrls = processingResult.projectResults
@@ -406,7 +439,7 @@ export class Worker extends EventEmitter {
           card,
           role,
           workflow,
-          processingResult.output,
+          processingResult.summary || processingResult.output,
           prUrls.length > 0 ? prUrls[0] : undefined,
           processingResult.projectResults
         );
@@ -611,7 +644,9 @@ export class Worker extends EventEmitter {
         if (!matchingRole) continue;
 
         // Start review
-        this.reviewCard(card, matchingRole, workflow, config);
+        this.reviewCard(card, matchingRole, workflow, config).catch(err => {
+          log.error('Unhandled review error', { cardId: card.id, error: err instanceof Error ? err.message : String(err) });
+        });
       }
     } catch (error) {
       log.debug('Review list poll error', { error: error instanceof Error ? error.message : String(error) });
@@ -650,8 +685,29 @@ export class Worker extends EventEmitter {
       const prComment = comments.find(c => c.text?.includes('**Pull Requests:**') || c.text?.includes('**Pull Request:**'));
       const prMatch = prComment?.text?.match(/github\.com\/([^/]+\/[^/]+)\/pull\/(\d+)/);
 
+      // Format all non-bot comments for review context
+      const humanComments = comments.filter(c => {
+          const t = c.text;
+          return !t.includes('**Boatclaw') &&
+            !t.includes('**Task completed') &&
+            !t.includes('**Task failed') &&
+            !t.includes('**Code review') &&
+            !t.includes('**Review passed') &&
+            !t.includes('**Review found') &&
+            !t.includes('**Automated review');
+        });
+      const ticketComments = humanComments.length > 0
+        ? humanComments.map(c => `**${c.authorName}** (${c.createdAt.toISOString().split('T')[0]}):\n${c.text}`).join('\n\n---\n\n').slice(0, 5000)
+        : undefined;
+
+      // Get the developer agent's completion comment — reviewer always needs this
+      const agentCompletionComment = comments.find(c =>
+        c.text?.includes('**Task completed successfully**') ||
+        c.text?.includes('**Task failed**')
+      );
+
       if (prMatch && this.githubToken) {
-        // GitHub mode: review the PR
+        // GitHub mode: review the PR + agent's report
         const repo = prMatch[1];
         const prNumber = parseInt(prMatch[2], 10);
 
@@ -671,6 +727,8 @@ export class Worker extends EventEmitter {
           repo,
           projectContext,
           agentContext,
+          ticketComments,
+          agentComment: agentCompletionComment?.text,
         });
       } else {
         // Local mode: review git diff + agent comment
@@ -679,12 +737,6 @@ export class Worker extends EventEmitter {
           aiProvider,
           workflow,
         });
-
-        // Get the agent's completion comment
-        const agentCompletionComment = comments.find(c =>
-          c.text?.includes('**Task completed successfully**') ||
-          c.text?.includes('**Task failed**')
-        );
 
         log.info('Starting local review', { cardId: card.id, project: project?.name });
 
@@ -695,6 +747,7 @@ export class Worker extends EventEmitter {
           projectContext,
           agentContext,
           agentComment: agentCompletionComment?.text,
+          ticketComments,
         });
       }
 
@@ -703,6 +756,12 @@ export class Worker extends EventEmitter {
       const msg = error instanceof Error ? error.message : String(error);
       log.error('Review failed', { cardId: card.id, error: msg });
       await this.provider.addComment(card.id, `⚠️ **Automated review failed:** ${msg}`);
+      // Move to failed to prevent infinite retry loop
+      if (workflow.failedId) {
+        try {
+          await this.provider.moveCard(card.id, workflow.failedId);
+        } catch { /* ignore move errors */ }
+      }
     } finally {
       this.reviewingCards.delete(card.id);
     }

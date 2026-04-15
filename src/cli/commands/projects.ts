@@ -476,10 +476,13 @@ function showProjectContextHints(): void {
 /**
  * Simple inline text input for context.
  */
+const MAX_CONTEXT_LENGTH = 5000;
+
 async function inputContextInline(prompt: string): Promise<string> {
   console.log();
   console.log(chalk.bold('  ' + prompt));
   console.log(chalk.dim('  Type your text. Press Enter for new line. Empty line to finish.'));
+  console.log(chalk.dim(`  Max ${MAX_CONTEXT_LENGTH} characters. For longer context, use a contextFile.`));
   console.log(chalk.cyan('  ─'.repeat(25)));
 
   return new Promise((res) => {
@@ -495,8 +498,16 @@ async function inputContextInline(prompt: string): Promise<string> {
 
     rl.on('line', (line: string) => {
       if (line === '' && lines.length > 0) {
-        rl.close();
         const result = lines.join('\n').trim();
+        if (result.length > MAX_CONTEXT_LENGTH) {
+          console.log(chalk.yellow(`  ⚠ Context too long (${result.length}/${MAX_CONTEXT_LENGTH} chars). Trimmed.`));
+          console.log(chalk.dim(`  Tip: Use a contextFile for longer context.`));
+          rl.close();
+          console.log(chalk.cyan('  ─'.repeat(25)));
+          res(result.slice(0, MAX_CONTEXT_LENGTH));
+          return;
+        }
+        rl.close();
         console.log(chalk.cyan('  ─'.repeat(25)));
         res(result);
         return;

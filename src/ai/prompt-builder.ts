@@ -31,6 +31,11 @@ export function buildPrompt(context: TaskContext): string {
     sections.push(buildRoleContextSection(context.roleName, context.roleContext));
   }
 
+  // Card comments (discussion, follow-ups, additional requirements)
+  if (context.cardComments) {
+    sections.push(`## Ticket Comments\n\nThe following comments were posted on this ticket. They may contain additional requirements, clarifications, or follow-up instructions:\n\n${context.cardComments}`);
+  }
+
   // Additional instructions
   if (context.additionalInstructions) {
     sections.push(buildAdditionalInstructionsSection(context.additionalInstructions));
@@ -168,7 +173,18 @@ function buildFinalSection(): string {
 
 Now implement the task described above. Start by exploring the relevant parts of the codebase, then make the necessary changes.
 
-When you're done, provide a brief summary of what you changed.`;
+## Completion Summary
+
+When you're done, end your response with a summary in this format:
+
+---
+**What was done:** Brief description of the implementation
+**Files changed:**
+- path/to/file1.ts — what was changed
+- path/to/file2.ts — what was changed
+**Blockers:** Any issues encountered or things that couldn't be completed (or "None")
+**Notes:** Anything the reviewer should know (or "None")
+---`;
 }
 
 /**
@@ -178,7 +194,9 @@ export function createTaskContext(
   card: Card,
   role: RoleConfig,
   options?: {
+    projectContext?: string;
     projectContextFile?: string;
+    cardComments?: string;
     additionalInstructions?: string;
     projectName?: string;
     projectPath?: string;
@@ -188,9 +206,9 @@ export function createTaskContext(
   // Determine the base path for context files
   const basePath = options?.projectPath || role.repoPath || process.cwd();
 
-  // Load project context if file exists
-  let projectContext: string | undefined;
-  if (options?.projectContextFile) {
+  // Load project context: prefer inline context, fall back to file
+  let projectContext: string | undefined = options?.projectContext;
+  if (!projectContext && options?.projectContextFile) {
     const contextPath = resolve(basePath, options.projectContextFile);
     if (existsSync(contextPath)) {
       try {
@@ -201,10 +219,9 @@ export function createTaskContext(
     }
   }
 
-  // Load engineer/role context if file exists
-  let roleContext: string | undefined;
-  if (role.contextFile) {
-    // Role context can be absolute or relative to basePath
+  // Load role context: prefer inline context, fall back to file
+  let roleContext: string | undefined = role.context;
+  if (!roleContext && role.contextFile) {
     const contextPath = role.contextFile.startsWith('/')
       ? role.contextFile
       : resolve(basePath, role.contextFile);
@@ -229,6 +246,7 @@ export function createTaskContext(
     projectName: options?.projectName,
     projectContext,
     roleContext,
+    cardComments: options?.cardComments,
     additionalInstructions: options?.additionalInstructions,
     interactive: options?.interactive,
   };

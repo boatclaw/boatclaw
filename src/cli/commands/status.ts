@@ -221,6 +221,23 @@ export function registerStatusCommands(program: Command): void {
         process.exit(1);
       }
 
+      // Validate project paths exist
+      const allProjects = Object.values(config.projects);
+      const missingPaths = allProjects.filter(p => !existsSync(p.path));
+      if (missingPaths.length > 0) {
+        ui.warning('Some project paths do not exist:');
+        for (const p of missingPaths) {
+          console.log(chalk.yellow(`  - ${p.name}: ${p.path}`));
+        }
+        if (missingPaths.length === allProjects.length) {
+          ui.error('No valid project paths found. Fix paths with:');
+          ui.info(`  ${chalk.cyan('boatclaw projects remove <name>')} then ${chalk.cyan('boatclaw projects add')}`);
+          process.exit(1);
+        }
+        ui.dim('  Tasks for these projects will fail. Fix with: boatclaw projects remove <name> && boatclaw projects add');
+        console.log();
+      }
+
       ui.showLogo();
 
       // Check for existing worker
@@ -270,6 +287,7 @@ export function registerStatusCommands(program: Command): void {
           ui.dim(`  ${aiCheck.error}`);
         }
         ui.info(`Make sure the ${config.ai.provider} CLI is installed and in your PATH.`);
+        try { unlinkSync(LOCK_FILE); } catch { /* ignore */ }
         process.exit(1);
       }
 
@@ -285,6 +303,7 @@ export function registerStatusCommands(program: Command): void {
 
         if (!connected) {
           spinner.fail('Failed to connect to board');
+          try { unlinkSync(LOCK_FILE); } catch { /* ignore */ }
           process.exit(1);
         }
 
@@ -293,7 +312,17 @@ export function registerStatusCommands(program: Command): void {
         // Show configuration
         console.log();
         ui.keyValue('Platform', config.platform || '');
-        ui.keyValue('Board', config.trello.boardName || config.trello.boardId);
+        let boardDisplay = '';
+        if (config.platform === 'trello') {
+          boardDisplay = config.trello.boardName || config.trello.boardId || '';
+        } else if (config.platform === 'jira') {
+          boardDisplay = config.jira.projectName || config.jira.projectKey || '';
+        } else if (config.platform === 'linear') {
+          boardDisplay = config.linear.teamName || config.linear.teamId || '';
+        }
+        if (boardDisplay) {
+          ui.keyValue('Board', boardDisplay);
+        }
         ui.keyValue('Poll Interval', `${config.worker.pollInterval}s`);
         ui.keyValue('Agents', agents.map((a) => a.name).join(', '));
         console.log();
