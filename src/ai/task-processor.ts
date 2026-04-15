@@ -277,11 +277,14 @@ export class TaskProcessor {
 
       // Track result for next project's context — use generous summary for cross-project
       if (projectResult.success) {
-        // Try structured summary first, fallback to last 2000 chars of output
-        const structuredMatch = projectResult.output.match(/\*\*What was done:?\*\*[\s\S]*?^---$/im);
-        const summary = structuredMatch
-          ? structuredMatch[0].trim()
-          : projectResult.output.slice(-2000).trim();
+        // Try tagged delimiters first, then legacy regex, then fallback
+        const taggedMatch = projectResult.output.match(/<!-- BOATCLAW_SUMMARY_START -->([\s\S]*?)<!-- BOATCLAW_SUMMARY_END -->/);
+        const legacyMatch = projectResult.output.match(/\*\*What was done:?\*\*[\s\S]*?^---$/im);
+        const summary = taggedMatch
+          ? taggedMatch[1].trim()
+          : legacyMatch
+            ? legacyMatch[0].trim()
+            : projectResult.output.slice(-2000).trim();
         previousResults.push({ name: project.name, summary });
       }
 
@@ -501,7 +504,13 @@ export class TaskProcessor {
    * Extract a structured summary from AI output.
    */
   private extractSummary(output: string): string {
-    // Try to extract the structured completion summary
+    // Try tagged delimiters first
+    const taggedMatch = output.match(/<!-- BOATCLAW_SUMMARY_START -->([\s\S]*?)<!-- BOATCLAW_SUMMARY_END -->/);
+    if (taggedMatch) {
+      return taggedMatch[1].trim().slice(0, 2000);
+    }
+
+    // Legacy: try structured completion summary
     const structuredMatch = output.match(/\*\*What was done:?\*\*[\s\S]*?^---$/im);
     if (structuredMatch) {
       return structuredMatch[0].trim().slice(0, 2000);

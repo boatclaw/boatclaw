@@ -413,11 +413,12 @@ export class Worker extends EventEmitter {
           }
           // Include structured summary or brief output snippet
           if (projectResult.output) {
-            const summaryMatch = projectResult.output.match(/\*\*What was done:?\*\*[\s\S]*?^---$/im);
-            if (summaryMatch) {
-              msg += `\n\n${summaryMatch[0].trim()}`;
+            const summaryMatch = projectResult.output.match(/<!-- BOATCLAW_SUMMARY_START -->([\s\S]*?)<!-- BOATCLAW_SUMMARY_END -->/);
+            const legacyMatch = projectResult.output.match(/\*\*What was done:?\*\*[\s\S]*?^---$/im);
+            const match = summaryMatch || legacyMatch;
+            if (match) {
+              msg += `\n\n${(summaryMatch ? summaryMatch[1] : match[0]).trim()}`;
             } else {
-              // Fallback: show last meaningful lines of output
               const lines = projectResult.output.split('\n').filter(l => l.trim()).slice(-5);
               if (lines.length > 0) {
                 msg += `\n\n**Output:**\n${lines.join('\n').slice(0, 500)}`;
@@ -533,7 +534,16 @@ export class Worker extends EventEmitter {
         !t.includes('**Code review') &&
         !t.includes('**Review passed') &&
         !t.includes('**Review found') &&
-        !t.includes('**Automated review');
+        !t.includes('**Automated review') &&
+        // Per-project status updates
+        !t.startsWith('✅ **') &&
+        !t.startsWith('❌ **') &&
+        // Planning comments
+        !t.includes('**Planning complete**') &&
+        // Abort notices
+        !t.includes('**Aborting remaining projects**') &&
+        // Machine-readable markers
+        !t.includes('<!-- BOATCLAW_PLANNED_PROJECTS:');
     });
     if (humanComments.length === 0) return undefined;
     return humanComments
@@ -724,7 +734,16 @@ export class Worker extends EventEmitter {
             !t.includes('**Code review') &&
             !t.includes('**Review passed') &&
             !t.includes('**Review found') &&
-            !t.includes('**Automated review');
+            !t.includes('**Automated review') &&
+            // Per-project status updates
+            !t.startsWith('✅ **') &&
+            !t.startsWith('❌ **') &&
+            // Planning comments
+            !t.includes('**Planning complete**') &&
+            // Abort notices
+            !t.includes('**Aborting remaining projects**') &&
+            // Machine-readable markers
+            !t.includes('<!-- BOATCLAW_PLANNED_PROJECTS:');
         });
       const ticketComments = humanComments.length > 0
         ? humanComments.map(c => `**${c.authorName}** (${c.createdAt.toISOString().split('T')[0]}):\n${c.text}`).join('\n\n---\n\n').slice(0, 5000)

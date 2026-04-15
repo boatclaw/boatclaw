@@ -42,7 +42,7 @@ export function buildPrompt(context: TaskContext): string {
   }
 
   // Final instruction
-  sections.push(buildFinalSection());
+  sections.push(buildFinalSection(context));
 
   return sections.join('\n\n');
 }
@@ -169,7 +169,28 @@ ${instructions}`;
 /**
  * Build final section.
  */
-function buildFinalSection(): string {
+function buildFinalSection(context: TaskContext): string {
+  // Check if this is a cross-project task (additionalInstructions will contain cross-project info)
+  const isCrossProject = context.additionalInstructions?.includes('cross-project task');
+
+  let summaryTemplate = `<!-- BOATCLAW_SUMMARY_START -->
+---
+**What was done:** Brief description of the implementation
+**Files changed:**
+- path/to/file1.ts — what was changed
+- path/to/file2.ts — what was changed`;
+
+  if (isCrossProject) {
+    summaryTemplate += `
+**API contracts added/changed:** (list any new or modified endpoints, request/response shapes, interfaces, schemas — or "None")`;
+  }
+
+  summaryTemplate += `
+**Blockers:** Any issues encountered or things that couldn't be completed (or "None")
+**Notes:** Anything the reviewer should know (or "None")
+---
+<!-- BOATCLAW_SUMMARY_END -->`;
+
   return `## Your Task
 
 Now implement the task described above. Start by exploring the relevant parts of the codebase, then make the necessary changes.
@@ -178,14 +199,7 @@ Now implement the task described above. Start by exploring the relevant parts of
 
 When you're done, end your response with a summary in this format:
 
----
-**What was done:** Brief description of the implementation
-**Files changed:**
-- path/to/file1.ts — what was changed
-- path/to/file2.ts — what was changed
-**Blockers:** Any issues encountered or things that couldn't be completed (or "None")
-**Notes:** Anything the reviewer should know (or "None")
----`;
+${summaryTemplate}`;
 }
 
 /**
