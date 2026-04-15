@@ -683,7 +683,6 @@ export class Worker extends EventEmitter {
       // Check if this card has a PR (GitHub mode) or is local
       const comments = await this.provider.getComments(card.id);
       const prComment = comments.find(c => c.text?.includes('**Pull Requests:**') || c.text?.includes('**Pull Request:**'));
-      const prMatch = prComment?.text?.match(/github\.com\/([^/]+\/[^/]+)\/pull\/(\d+)/);
 
       // Format all non-bot comments for review context
       const humanComments = comments.filter(c => {
@@ -706,49 +705,58 @@ export class Worker extends EventEmitter {
         c.text?.includes('**Task failed**')
       );
 
-      if (prMatch && this.githubToken) {
-        // GitHub mode: review the PR + agent's report
-        const repo = prMatch[1];
-        const prNumber = parseInt(prMatch[2], 10);
+      // Find ALL PR URLs in comments (multi-project tasks have multiple PRs)
+      const allPrMatches = prComment?.text?.matchAll(/github\.com\/([^/]+\/[^/]+)\/pull\/(\d+)/g);
+      const prList = allPrMatches ? [...allPrMatches].map(m => ({ repo: m[1], prNumber: parseInt(m[2], 10) })) : [];
 
-        const githubClient = new GitHubClient({ token: this.githubToken, defaultRepo: repo });
-        const reviewer = createReviewerAgent({
-          boardProvider: this.provider,
-          aiProvider,
-          githubClient,
-          workflow,
-        });
+      if (prList.length > 0 && this.githubToken) {
+        // GitHub mode: review each PR
+        for (const pr of prList) {
+          const prProject = Object.values(config.projects).find(p => p.github === pr.repo);
 
-        log.info('Starting PR review', { cardId: card.id, prNumber, repo });
+          const githubClient = new GitHubClient({ token: this.githubToken, defaultRepo: pr.repo });
+          const reviewer = createReviewerAgent({
+            boardProvider: this.provider,
+            aiProvider,
+            githubClient,
+            workflow,
+          });
 
-        await reviewer.processCardForReview({
-          card,
-          prNumber,
-          repo,
-          projectContext,
-          agentContext,
-          ticketComments,
-          agentComment: agentCompletionComment?.text,
-        });
+          log.info('Starting PR review', { cardId: card.id, prNumber: pr.prNumber, repo: pr.repo });
+
+          await reviewer.processCardForReview({
+            card,
+            prNumber: pr.prNumber,
+            repo: pr.repo,
+            projectContext: prProject?.context || projectContext,
+            agentContext,
+            ticketComments,
+            agentComment: agentCompletionComment?.text,
+          });
+        }
       } else {
-        // Local mode: review git diff + agent comment
-        const reviewer = createReviewerAgent({
-          boardProvider: this.provider,
-          aiProvider,
-          workflow,
-        });
+        // Local mode: review each project's changes
+        const projectsToReview = roleProjects.length > 0 ? roleProjects : (project ? [project] : []);
 
-        log.info('Starting local review', { cardId: card.id, project: project?.name });
+        for (const proj of projectsToReview) {
+          const reviewer = createReviewerAgent({
+            boardProvider: this.provider,
+            aiProvider,
+            workflow,
+          });
 
-        await reviewer.processCardForLocalReview({
-          card,
-          projectPath: project?.path || process.cwd(),
-          baseBranch: project?.baseBranch || 'main',
-          projectContext,
-          agentContext,
-          agentComment: agentCompletionComment?.text,
-          ticketComments,
-        });
+          log.info('Starting local review', { cardId: card.id, project: proj.name });
+
+          await reviewer.processCardForLocalReview({
+            card,
+            projectPath: proj.path || process.cwd(),
+            baseBranch: proj.baseBranch || 'main',
+            projectContext: proj.context || projectContext,
+            agentContext,
+            agentComment: agentCompletionComment?.text,
+            ticketComments,
+          });
+        }
       }
 
       log.info('Review completed', { cardId: card.id });
