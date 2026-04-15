@@ -265,35 +265,45 @@ export class WorktreeManager {
     taskId: string;
     message: string;
     addAll?: boolean;
+    baseBranch?: string;
   }): Promise<string | null> {
     const worktree = await this.getWorktree(options.taskId);
     if (!worktree) {
       throw new WorktreeError(`Worktree not found: ${options.taskId}`);
     }
 
-    // Check for changes
+    // Check for uncommitted changes
     const statusResult = await this.runGit(
       ['status', '--porcelain'],
       worktree.path
     );
 
-    if (!statusResult.stdout) {
-      return null;
+    if (statusResult.stdout) {
+      // Stage and commit uncommitted changes
+      if (options.addAll !== false) {
+        await this.runGit(['add', '-A'], worktree.path);
+      }
+
+      const commitResult = await this.runGit(
+        ['commit', '-m', options.message],
+        worktree.path
+      );
+
+      if (commitResult.code !== 0) {
+        throw new WorktreeError(`Failed to commit: ${commitResult.stderr}`);
+      }
     }
 
-    // Stage changes
-    if (options.addAll !== false) {
-      await this.runGit(['add', '-A'], worktree.path);
-    }
-
-    // Commit
-    const commitResult = await this.runGit(
-      ['commit', '-m', options.message],
+    // Check if there are ANY commits on this branch vs base
+    // (AI agents like Claude commit changes themselves during execution)
+    const base = options.baseBranch || 'main';
+    const logResult = await this.runGit(
+      ['log', `origin/${base}..HEAD`, '--oneline'],
       worktree.path
     );
 
-    if (commitResult.code !== 0) {
-      throw new WorktreeError(`Failed to commit: ${commitResult.stderr}`);
+    if (!logResult.stdout) {
+      return null; // No changes at all (uncommitted or committed)
     }
 
     // Get commit hash
@@ -326,17 +336,31 @@ export class WorktreeManager {
   }
 
   /**
-   * Check if worktree has uncommitted changes
+   * Check if worktree has changes (uncommitted OR committed on the branch).
+   * AI agents like Claude commit changes themselves, so we must also check
+   * for committed changes relative to the base branch.
    */
-  async hasChanges(taskId: string): Promise<boolean> {
+  async hasChanges(taskId: string, baseBranch?: string): Promise<boolean> {
     const worktree = await this.getWorktree(taskId);
     if (!worktree) {
       return false;
     }
 
-    const result = await this.runGit(['status', '--porcelain'], worktree.path);
+    // Check for uncommitted changes
+    const statusResult = await this.runGit(['status', '--porcelain'], worktree.path);
+    if (statusResult.stdout) {
+      return true;
+    }
 
-    return !!result.stdout;
+    // Check for committed changes on the branch vs base branch
+    // (AI agents like Claude commit changes themselves during execution)
+    const base = baseBranch || 'main';
+    const diffResult = await this.runGit(
+      ['log', `origin/${base}..HEAD`, '--oneline'],
+      worktree.path
+    );
+
+    return !!diffResult.stdout;
   }
 
   /**
