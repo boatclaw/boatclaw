@@ -154,6 +154,8 @@ export class TaskProcessor {
       cardComments?: string;
       dryRun?: boolean;
       fetchComments?: (cardId: string) => Promise<string | undefined>;
+      /** Post a comment to the ticket (for plan updates, etc.) */
+      postComment?: (cardId: string, text: string) => Promise<void>;
       onProjectComplete?: (result: ProjectProcessingResult) => Promise<void> | void;
     }
   ): Promise<TaskProcessingResult> {
@@ -189,6 +191,31 @@ export class TaskProcessor {
           reasoning: plan.reasoning,
           skipped: projects.filter(p => !plan!.projects.some(pp => pp.toLowerCase() === p.name.toLowerCase())).map(p => p.name).join(', ') || 'none',
         });
+      }
+    }
+
+    // Post plan decision to ticket for transparency
+    if (plan && options?.postComment) {
+      const skipped = projects
+        .filter(p => !plan!.projects.some(pp => pp.toLowerCase() === p.name.toLowerCase()))
+        .map(p => p.name);
+
+      let planMsg = `📋 **Planning complete**\n\n**Scope:** ${plan.scope}\n**Order:** ${plan.projects.join(' → ')}`;
+      if (skipped.length > 0) {
+        planMsg += `\n**Skipped:** ${skipped.join(', ')}`;
+      }
+      if (plan.sharedContracts) {
+        planMsg += `\n**Shared contracts:** Yes — will abort remaining projects if a dependency fails`;
+      }
+      planMsg += `\n**Reasoning:** ${plan.reasoning}`;
+      if (plan.executionNotes) {
+        planMsg += `\n**Notes:** ${plan.executionNotes}`;
+      }
+
+      try {
+        await options.postComment(card.id, planMsg);
+      } catch {
+        log.debug('Failed to post plan comment', { cardId: card.id });
       }
     }
 
@@ -267,6 +294,30 @@ export class TaskProcessor {
         hasAnySuccess = true;
       } else {
         hasAnyFailure = true;
+
+        // Abort remaining projects if this is a cross-project task with shared contracts
+        if (plan?.scope === 'cross-project' && plan?.sharedContracts) {
+          const currentIndex = projectsToProcess.indexOf(project);
+          const remaining = projectsToProcess.slice(currentIndex + 1).map(p => p.name);
+
+          if (remaining.length > 0) {
+            log.warn('Aborting remaining projects due to dependency failure', {
+              failedProject: project.name,
+              remainingProjects: remaining.join(', '),
+            });
+
+            if (options?.postComment) {
+              try {
+                await options.postComment(card.id,
+                  `⚠️ **Aborting remaining projects** (${remaining.join(', ')})\n\n` +
+                  `**${project.name}** failed and has shared contracts with downstream projects. ` +
+                  `Continuing would produce incompatible changes.`
+                );
+              } catch { /* ignore */ }
+            }
+          }
+          break;
+        }
       }
     }
 
@@ -512,6 +563,7 @@ export function createTaskProcessorFunction(
   onProjectComplete?: (result: { projectName: string; success: boolean; error?: string; prUrl?: string; prNumber?: number; output?: string }) => Promise<void> | void,
   cardComments?: string,
   fetchComments?: (cardId: string) => Promise<string | undefined>,
+  postComment?: (cardId: string, text: string) => Promise<void>,
 ) => Promise<{
   success: boolean;
   output: string;
@@ -520,11 +572,13 @@ export function createTaskProcessorFunction(
 }> {
   const processor = new TaskProcessor(options);
 
-  return async (card, role, projects, onProjectComplete, cardComments, fetchComments) => {
+  return async (card, role, projects, onProjectComplete, cardComments, fetchComments, postComment) => {
     const result = await processor.processMultiProject(card, role, projects, {
+      additionalInstructions: options?.additionalInstructions,
       dryRun: options?.dryRun,
       cardComments,
       fetchComments,
+      postComment,
       onProjectComplete: onProjectComplete || options?.onProjectComplete,
     });
 

@@ -85,6 +85,7 @@ export type TaskProcessor = (
   onProjectComplete?: (result: ProjectProcessingNotification) => Promise<void> | void,
   cardComments?: string,
   fetchComments?: (cardId: string) => Promise<string | undefined>,
+  postComment?: (cardId: string, text: string) => Promise<void>,
 ) => Promise<{
   success: boolean;
   output: string;
@@ -111,7 +112,7 @@ export interface WorkerOptions {
 /**
  * Default task processor (placeholder until AI is implemented).
  */
-const defaultTaskProcessor: TaskProcessor = async (card, role, projects, _onProjectComplete, _cardComments, _fetchComments) => {
+const defaultTaskProcessor: TaskProcessor = async (card, role, projects, _onProjectComplete, _cardComments, _fetchComments, _postComment) => {
   // Simulate processing time
   await new Promise((resolve) => setTimeout(resolve, 1000));
 
@@ -429,7 +430,7 @@ export class Worker extends EventEmitter {
             log.debug('Failed to post per-project update', { cardId: card.id, project: projectResult.projectName });
           }
         }
-      }, cardComments, (cardId) => this.fetchHumanComments(cardId));
+      }, cardComments, (cardId) => this.fetchHumanComments(cardId), async (cardId, text) => { await this.provider.addComment(cardId, text); });
 
       // Collect all PR URLs
       const prUrls = processingResult.projectResults
