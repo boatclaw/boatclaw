@@ -115,21 +115,45 @@ export class WorktreeManager {
       await this.removeWorktree(options.taskId);
     }
 
-    // Fetch latest from remote
-    await this.runGit(['fetch', 'origin', baseBranch]);
+    // Fetch latest from remote (non-fatal — fall back to local branch if fetch fails)
+    const fetchResult = await this.runGit(['fetch', 'origin', baseBranch]);
+    const useLocal = fetchResult.code !== 0;
+    const baseRef = useLocal ? baseBranch : `origin/${baseBranch}`;
 
     // Create new branch from base
-    const result = await this.runGit([
+    let result = await this.runGit([
       'worktree',
       'add',
       '-b',
       options.branchName,
       worktreePath,
-      `origin/${baseBranch}`,
+      baseRef,
     ]);
 
+    // Auto-fix common failures and retry
     if (result.code !== 0) {
-      throw new WorktreeError(`Failed to create worktree: ${result.stderr}`);
+      const stderr = result.stderr.toLowerCase();
+
+      if (stderr.includes('already exists')) {
+        // Auto-fix: delete old branch and retry
+        await this.runGit(['branch', '-D', options.branchName]);
+        // Also clean up any leftover worktree for this branch
+        await this.runGit(['worktree', 'prune']);
+        result = await this.runGit([
+          'worktree', 'add', '-b', options.branchName, worktreePath, baseRef,
+        ]);
+      }
+
+      if (result.code !== 0) {
+        const retryStderr = result.stderr.toLowerCase();
+        if (retryStderr.includes('not a git repository')) {
+          throw new WorktreeError(
+            `"${this.mainRepoPath}" is not a git repository. Make sure the project path is correct.`
+          );
+        } else {
+          throw new WorktreeError(`Failed to create worktree: ${result.stderr}`);
+        }
+      }
     }
 
     // Get commit hash
