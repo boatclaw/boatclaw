@@ -137,8 +137,8 @@ export class PRManager {
     let worktree: Worktree | null = null;
 
     try {
-      // Check for changes
-      const hasChanges = await this.worktrees.hasChanges(taskId);
+      // Check for changes (uncommitted or committed by AI agent)
+      const hasChanges = await this.worktrees.hasChanges(taskId, this.baseBranch);
 
       if (!hasChanges) {
         return {
@@ -162,10 +162,11 @@ export class PRManager {
         options.commitMessage ||
         `${options.card.title}\n\nTask: ${options.card.url}`;
 
-      // Commit changes
+      // Commit changes (also detects changes already committed by the AI agent)
       const commit = await this.worktrees.commitChanges({
         taskId,
         message: commitMessage,
+        baseBranch: this.baseBranch,
       });
 
       if (!commit) {
