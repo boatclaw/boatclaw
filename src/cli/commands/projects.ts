@@ -17,6 +17,7 @@ import { existsSync } from 'fs';
 import { resolve, basename } from 'path';
 import * as ui from '../ui.js';
 import { selectPath, detectGitHubRepo, isGitRepo, getDefaultBranch } from '../prompts.js';
+import { isInitialized } from '../../core/paths.js';
 
 export function registerProjectsCommands(program: Command): void {
   const projects = program
@@ -133,6 +134,12 @@ async function addProject(options: {
   github?: string;
   context?: string;
 }): Promise<void> {
+  if (!isInitialized()) {
+    ui.error('Boatclaw is not configured.');
+    ui.info(`Run ${chalk.cyan('boatclaw setup')} first.`);
+    return;
+  }
+
   console.log();
   console.log(chalk.bold('Add Project'));
   console.log(chalk.dim('Add a repository for agents to work on.'));
@@ -379,6 +386,12 @@ function showProject(name: string): void {
 }
 
 async function editProjectContext(name: string): Promise<void> {
+  if (!isInitialized()) {
+    ui.error('Boatclaw is not configured.');
+    ui.info(`Run ${chalk.cyan('boatclaw setup')} first.`);
+    return;
+  }
+
   const project = configManager.getProject(name);
 
   if (!project) {

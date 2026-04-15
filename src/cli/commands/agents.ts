@@ -459,6 +459,12 @@ async function addAgent(): Promise<void> {
 }
 
 async function editAgentContext(name: string): Promise<void> {
+  if (!isInitialized()) {
+    ui.error('Boatclaw is not configured.');
+    ui.info(`Run ${chalk.cyan('boatclaw setup')} first.`);
+    return;
+  }
+
   const existingAgents = configManager.getRoles();
 
   if (!(name in existingAgents)) {

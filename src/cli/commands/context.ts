@@ -16,6 +16,7 @@ import inquirer from 'inquirer';
 import * as readline from 'readline';
 import { configManager } from '../../core/config.js';
 import * as ui from '../ui.js';
+import { isInitialized } from '../../core/paths.js';
 
 export function registerContextCommands(program: Command): void {
   const context = program
@@ -53,6 +54,12 @@ export function registerContextCommands(program: Command): void {
 }
 
 function listContext(): void {
+  if (!isInitialized()) {
+    ui.error('Boatclaw is not configured.');
+    ui.info(`Run ${chalk.cyan('boatclaw setup')} first.`);
+    return;
+  }
+
   const projects = configManager.getProjects();
   const agents = configManager.getRoles();
   const projectList = Object.values(projects);
@@ -107,6 +114,12 @@ function listContext(): void {
 }
 
 async function editProjectContext(name: string): Promise<void> {
+  if (!isInitialized()) {
+    ui.error('Boatclaw is not configured.');
+    ui.info(`Run ${chalk.cyan('boatclaw setup')} first.`);
+    return;
+  }
+
   const project = configManager.getProject(name);
 
   if (!project) {
@@ -196,6 +209,12 @@ async function editProjectContext(name: string): Promise<void> {
 }
 
 async function editAgentContext(name: string): Promise<void> {
+  if (!isInitialized()) {
+    ui.error('Boatclaw is not configured.');
+    ui.info(`Run ${chalk.cyan('boatclaw setup')} first.`);
+    return;
+  }
+
   const agents = configManager.getRoles();
   const agent = agents[name];
 
@@ -286,6 +305,12 @@ async function editAgentContext(name: string): Promise<void> {
 }
 
 async function clearContext(type: string, name: string): Promise<void> {
+  if (!isInitialized()) {
+    ui.error('Boatclaw is not configured.');
+    ui.info(`Run ${chalk.cyan('boatclaw setup')} first.`);
+    return;
+  }
+
   if (type !== 'project' && type !== 'agent') {
     ui.error('Type must be "project" or "agent"');
     return;
