@@ -570,13 +570,14 @@ export function createTaskProcessorFunction(
   card: Card,
   role: RoleConfig,
   projects: ProjectConfig[],
-  onProjectComplete?: (result: { projectName: string; success: boolean; error?: string; prUrl?: string; prNumber?: number; output?: string }) => Promise<void> | void,
+  onProjectComplete?: (result: { projectName: string; success: boolean; error?: string; prUrl?: string; prNumber?: number; output: string }) => Promise<void> | void,
   cardComments?: string,
   fetchComments?: (cardId: string) => Promise<string | undefined>,
   postComment?: (cardId: string, text: string) => Promise<void>,
 ) => Promise<{
   success: boolean;
   output: string;
+  summary?: string;
   error?: string;
   projectResults?: ProjectResult[];
 }> {

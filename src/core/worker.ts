@@ -70,7 +70,7 @@ export interface ProjectProcessingNotification {
   error?: string;
   prUrl?: string;
   prNumber?: number;
-  output?: string;
+  output: string;
 }
 
 /**
