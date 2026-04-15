@@ -238,12 +238,15 @@ export class GitHubClient {
   ): Promise<ChangedFile[]> {
     const { owner, repo: repoName } = this.parseRepo(repo);
 
-    const { data } = await this.octokit.rest.pulls.listFiles({
-      owner,
-      repo: repoName,
-      pull_number: prNumber,
-      per_page: 100,
-    });
+    const data = await this.octokit.paginate(
+      this.octokit.rest.pulls.listFiles,
+      {
+        owner,
+        repo: repoName,
+        pull_number: prNumber,
+        per_page: 100,
+      }
+    );
 
     return data.map((f) => ({
       filename: f.filename,
@@ -434,7 +437,7 @@ export class GitHubClient {
       baseBranch: data.base.ref,
       createdAt: new Date(data.created_at),
       updatedAt: new Date(data.updated_at),
-      merged: data.merged || data.merged_at !== null,
+      merged: data.merged === true || !!data.merged_at,
       mergeable: data.mergeable ?? null,
       diffUrl: data.diff_url,
     };
