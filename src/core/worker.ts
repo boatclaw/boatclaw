@@ -251,8 +251,10 @@ export class Worker extends EventEmitter {
           break;
         }
 
-        // Process task
-        this.processTask(card, role, projects);
+        // Process task (fire-and-forget with error handling)
+        this.processTask(card, role, projects).catch(err => {
+          this.emit('error', err instanceof Error ? err : new Error(String(err)));
+        });
       }
 
       // Also check review list for cards that need automated review
@@ -516,7 +518,10 @@ export class Worker extends EventEmitter {
     workflow: WorkflowConfig
   ): Promise<void> {
     if (workflow.workingId) {
-      await this.provider.moveCard(card.id, workflow.workingId);
+      const result = await this.provider.moveCard(card.id, workflow.workingId);
+      if (!result.success) {
+        throw new Error(`Failed to move card to working list: ${result.error || 'unknown error'}`);
+      }
     }
   }
 
@@ -609,13 +614,22 @@ export class Worker extends EventEmitter {
     // Add role info
     parts.push(`_Processed by agent **${role.name}**_`);
 
-    await this.provider.addComment(card.id, parts.join('\n\n'));
+    const commentResult = await this.provider.addComment(card.id, parts.join('\n\n'));
+    if (!commentResult.success) {
+      log.warn('Failed to post success comment', { cardId: card.id, error: commentResult.error });
+    }
 
     // Always move to review list first if configured — reviewer will move to success/failed
     if (workflow.reviewId) {
-      await this.provider.moveCard(card.id, workflow.reviewId);
+      const moveResult = await this.provider.moveCard(card.id, workflow.reviewId);
+      if (!moveResult.success) {
+        log.warn('Failed to move card to review list', { cardId: card.id, error: moveResult.error });
+      }
     } else if (workflow.successId) {
-      await this.provider.moveCard(card.id, workflow.successId);
+      const moveResult = await this.provider.moveCard(card.id, workflow.successId);
+      if (!moveResult.success) {
+        log.warn('Failed to move card to success list', { cardId: card.id, error: moveResult.error });
+      }
     }
   }
 
@@ -650,12 +664,18 @@ export class Worker extends EventEmitter {
 
     parts.push(`_Processed by agent **${role.name}**_`);
 
-    await this.provider.addComment(card.id, parts.join('\n\n'));
+    const commentResult = await this.provider.addComment(card.id, parts.join('\n\n'));
+    if (!commentResult.success) {
+      log.warn('Failed to post failure comment', { cardId: card.id, error: commentResult.error });
+    }
 
     // Move to failed list if configured, otherwise back to trigger
     const targetList = workflow.failedId || workflow.triggerId;
     if (targetList) {
-      await this.provider.moveCard(card.id, targetList);
+      const moveResult = await this.provider.moveCard(card.id, targetList);
+      if (!moveResult.success) {
+        log.warn('Failed to move card to failed/trigger list', { cardId: card.id, error: moveResult.error });
+      }
     }
   }
 
