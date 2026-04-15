@@ -82,8 +82,9 @@ export type TaskProcessor = (
   card: Card,
   role: RoleConfig,
   projects: ProjectConfig[],
-  onProjectComplete?: (result: ProjectProcessingNotification) => void,
+  onProjectComplete?: (result: ProjectProcessingNotification) => Promise<void> | void,
   cardComments?: string,
+  fetchComments?: (cardId: string) => Promise<string | undefined>,
 ) => Promise<{
   success: boolean;
   output: string;
@@ -110,7 +111,7 @@ export interface WorkerOptions {
 /**
  * Default task processor (placeholder until AI is implemented).
  */
-const defaultTaskProcessor: TaskProcessor = async (card, role, projects) => {
+const defaultTaskProcessor: TaskProcessor = async (card, role, projects, _onProjectComplete, _cardComments, _fetchComments) => {
   // Simulate processing time
   await new Promise((resolve) => setTimeout(resolve, 1000));
 
@@ -380,7 +381,16 @@ export class Worker extends EventEmitter {
         await this.moveCardToWorking(card, workflow);
       }
 
-      // Add started comment with projects info
+      // Fetch card comments for context (human discussion, follow-ups)
+      // Done BEFORE the started comment so planning can use them
+      let cardComments: string | undefined;
+      try {
+        cardComments = await this.fetchHumanComments(card.id);
+      } catch {
+        // Ignore comment fetch errors — not critical
+      }
+
+      // Add started comment
       if (!this.dryRun) {
         const projectList = projects.map(p => `- ${p.name}`).join('\n');
         await this.provider.addComment(
@@ -389,32 +399,8 @@ export class Worker extends EventEmitter {
         );
       }
 
-      // Fetch card comments for context (human discussion, follow-ups)
-      let cardComments: string | undefined;
-      try {
-        const comments = await this.provider.getComments(card.id);
-        const humanComments = comments.filter(c => {
-          const t = c.text;
-          return !t.includes('**Boatclaw') &&
-            !t.includes('**Task completed') &&
-            !t.includes('**Task failed') &&
-            !t.includes('**Code review') &&
-            !t.includes('**Review passed') &&
-            !t.includes('**Review found') &&
-            !t.includes('**Automated review');
-        });
-        if (humanComments.length > 0) {
-          cardComments = humanComments
-            .map(c => `**${c.authorName}** (${c.createdAt.toISOString().split('T')[0]}):\n${c.text}`)
-            .join('\n\n---\n\n')
-            .slice(0, 5000);
-        }
-      } catch {
-        // Ignore comment fetch errors — not critical
-      }
-
       // Execute task across all projects, posting per-project updates
-      const processingResult = await this.taskProcessor(card, role, projects, (projectResult) => {
+      const processingResult = await this.taskProcessor(card, role, projects, async (projectResult) => {
         if (!this.dryRun && projects.length > 1) {
           const status = projectResult.success ? '✅' : '❌';
           let msg = `${status} **${projectResult.projectName}** — ${projectResult.success ? 'completed' : 'failed'}`;
@@ -424,16 +410,26 @@ export class Worker extends EventEmitter {
           if (projectResult.error) {
             msg += `\n> ${projectResult.error}`;
           }
-          // Include structured summary if available
+          // Include structured summary or brief output snippet
           if (projectResult.output) {
-            const summaryMatch = projectResult.output.match(/\*\*What was done:\*\*[\s\S]*?^---$/m);
+            const summaryMatch = projectResult.output.match(/\*\*What was done:?\*\*[\s\S]*?^---$/im);
             if (summaryMatch) {
               msg += `\n\n${summaryMatch[0].trim()}`;
+            } else {
+              // Fallback: show last meaningful lines of output
+              const lines = projectResult.output.split('\n').filter(l => l.trim()).slice(-5);
+              if (lines.length > 0) {
+                msg += `\n\n**Output:**\n${lines.join('\n').slice(0, 500)}`;
+              }
             }
           }
-          this.provider.addComment(card.id, msg).catch(() => {});
+          try {
+            await this.provider.addComment(card.id, msg);
+          } catch {
+            log.debug('Failed to post per-project update', { cardId: card.id, project: projectResult.projectName });
+          }
         }
-      }, cardComments);
+      }, cardComments, (cardId) => this.fetchHumanComments(cardId));
 
       // Collect all PR URLs
       const prUrls = processingResult.projectResults
@@ -520,6 +516,29 @@ export class Worker extends EventEmitter {
     if (workflow.workingId) {
       await this.provider.moveCard(card.id, workflow.workingId);
     }
+  }
+
+  /**
+   * Fetch human comments from a card, filtering out bot comments.
+   * Returns formatted string or undefined if no human comments.
+   */
+  private async fetchHumanComments(cardId: string): Promise<string | undefined> {
+    const comments = await this.provider.getComments(cardId);
+    const humanComments = comments.filter(c => {
+      const t = c.text;
+      return !t.includes('**Boatclaw') &&
+        !t.includes('**Task completed') &&
+        !t.includes('**Task failed') &&
+        !t.includes('**Code review') &&
+        !t.includes('**Review passed') &&
+        !t.includes('**Review found') &&
+        !t.includes('**Automated review');
+    });
+    if (humanComments.length === 0) return undefined;
+    return humanComments
+      .map(c => `**${c.authorName}** (${c.createdAt.toISOString().split('T')[0]}):\n${c.text}`)
+      .join('\n\n---\n\n')
+      .slice(0, 5000);
   }
 
   /**
