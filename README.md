@@ -119,7 +119,9 @@ How it works:
 3. Waits for your reply (comment starting with "Answer:")
 4. Continues with your guidance
 
-This uses Claude's MCP (Model Context Protocol) to enable the `ask_human` tool.
+This uses Claude's MCP (Model Context Protocol) to enable two tools:
+- `ask_human` - posts a question, waits for reply
+- `post_update` - posts progress updates without blocking
 
 ## Example
 
@@ -153,6 +155,35 @@ roles:
     projects: ['*']  # All projects
     model: opus
 ```
+
+When an agent has 2+ projects, Boatclaw runs a **planning phase** before execution:
+
+1. Analyzes the task to decide which projects actually need changes
+2. Determines execution order (e.g., backend API first, then frontend)
+3. Detects shared contracts/APIs between projects
+4. Posts the plan to the ticket for transparency
+
+**How context flows between projects:**
+- Each project runs in its own session
+- Before starting the next project, Boatclaw re-fetches ticket comments
+- The previous project's completion summary is passed as context
+- If a cross-project task has shared contracts and one project fails, remaining projects are aborted
+
+**Planner model** — uses `haiku` by default (fast, cheap). Configurable:
+```yaml
+ai:
+  plannerModel: haiku  # or sonnet, opus
+```
+
+## Review Phase
+
+After task completion, cards move to the review list where an AI reviewer:
+- Reviews the actual PR (if created) or local git diff
+- Only reviews projects that were in the plan (not all role projects)
+- Approves or requests changes
+- Moves card to Done (approved) or Failed (rejected)
+
+All projects must pass review for the card to reach Done.
 
 ## Vision
 
