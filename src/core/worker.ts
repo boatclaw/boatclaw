@@ -859,6 +859,8 @@ export class Worker extends EventEmitter {
               agentContext,
               agentComment: agentCompletionComment?.text,
               ticketComments,
+              projectName: proj.name,
+              githubRepo: proj.github,
             });
 
             reviewResults.push({ name: proj.name, approved: result.approved });

@@ -190,10 +190,14 @@ export class ReviewerAgent {
   }): Promise<ReviewResult> {
     const { card, prNumber, repo, projectContext, agentContext, ticketComments, agentComment } = options;
 
+    // Build project label for comments
+    const prUrl = `https://github.com/${repo}/pull/${prNumber}`;
+    const projectLabel = repo ? `**${repo}**` : `PR #${prNumber}`;
+
     // Add started comment
     await this.board.addComment(
       card.id,
-      `🔍 **Boatclaw starting code review**\n\nReviewing PR #${prNumber}...`
+      `🔍 **Boatclaw starting code review** — ${projectLabel}\n\nReviewing [PR #${prNumber}](${prUrl})...`
     );
 
     // Perform review
@@ -205,12 +209,12 @@ export class ReviewerAgent {
     // Post review result as comment (card movement handled by caller)
     if (result.approved) {
       await this.board.addComment(card.id,
-        `✅ **Code review passed** (PR #${prNumber})\n\n**Summary:** ${result.summary}`
+        `✅ **Review passed** — ${projectLabel} ([PR #${prNumber}](${prUrl}))\n\n**Summary:** ${result.summary}`
       );
     } else {
       const issuesText = result.issues.map((issue) => `- ${issue}`).join('\n');
       await this.board.addComment(card.id,
-        `❌ **Code review found issues** (PR #${prNumber})\n\n**Summary:** ${result.summary}\n\n**Issues:**\n${issuesText}`
+        `❌ **Review found issues** — ${projectLabel} ([PR #${prNumber}](${prUrl}))\n\n**Summary:** ${result.summary}\n\n**Issues:**\n${issuesText}`
       );
     }
 
@@ -352,22 +356,30 @@ export class ReviewerAgent {
     agentContext?: string;
     agentComment?: string;
     ticketComments?: string;
+    /** Project name for display in comments */
+    projectName?: string;
+    /** GitHub repo (owner/repo) for linking in comments */
+    githubRepo?: string;
   }): Promise<ReviewResult> {
-    const { card, projectPath, baseBranch, projectContext, agentContext, agentComment, ticketComments } = options;
+    const { card, projectPath, baseBranch, projectContext, agentContext, agentComment, ticketComments, projectName, githubRepo } = options;
+
+    // Build project label for comments
+    const projectLabel = projectName || projectPath.split('/').pop() || 'project';
+    const repoLink = githubRepo ? ` ([${githubRepo}](https://github.com/${githubRepo}))` : '';
 
     await this.board.addComment(
       card.id,
-      `🔍 **Boatclaw starting review**\n\nReviewing changes in project...`
+      `🔍 **Boatclaw starting review** — **${projectLabel}**${repoLink}\n\nReviewing local changes...`
     );
 
     const result = await this.reviewLocal({ card, projectPath, baseBranch, projectContext, agentContext, agentComment, ticketComments });
 
     // Post review result as comment (card movement handled by caller)
     if (result.approved) {
-      await this.board.addComment(card.id, `✅ **Review passed**\n\n**Summary:** ${result.summary}`);
+      await this.board.addComment(card.id, `✅ **Review passed** — **${projectLabel}**${repoLink}\n\n**Summary:** ${result.summary}`);
     } else {
       const issuesText = result.issues.map(i => `- ${i}`).join('\n');
-      await this.board.addComment(card.id, `❌ **Review found issues**\n\n**Summary:** ${result.summary}\n\n**Issues:**\n${issuesText}`);
+      await this.board.addComment(card.id, `❌ **Review found issues** — **${projectLabel}**${repoLink}\n\n**Summary:** ${result.summary}\n\n**Issues:**\n${issuesText}`);
     }
 
     return result;
