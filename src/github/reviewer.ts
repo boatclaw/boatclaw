@@ -190,14 +190,16 @@ export class ReviewerAgent {
   }): Promise<ReviewResult> {
     const { card, prNumber, repo, projectContext, agentContext, ticketComments, agentComment } = options;
 
-    // Build project label for comments
-    const prUrl = `https://github.com/${repo}/pull/${prNumber}`;
+    // Build project label and PR link for comments
+    const prLink = repo
+      ? `[PR #${prNumber}](https://github.com/${repo}/pull/${prNumber})`
+      : `PR #${prNumber}`;
     const projectLabel = repo ? `**${repo}**` : `PR #${prNumber}`;
 
     // Add started comment
     await this.board.addComment(
       card.id,
-      `🔍 **Boatclaw starting code review** — ${projectLabel}\n\nReviewing [PR #${prNumber}](${prUrl})...`
+      `🔍 **Boatclaw starting code review** — ${projectLabel}\n\nReviewing ${prLink}...`
     );
 
     // Perform review
@@ -209,12 +211,12 @@ export class ReviewerAgent {
     // Post review result as comment (card movement handled by caller)
     if (result.approved) {
       await this.board.addComment(card.id,
-        `✅ **Review passed** — ${projectLabel} ([PR #${prNumber}](${prUrl}))\n\n**Summary:** ${result.summary}`
+        `✅ **Review passed** — ${projectLabel} (${prLink})\n\n**Summary:** ${result.summary}`
       );
     } else {
       const issuesText = result.issues.map((issue) => `- ${issue}`).join('\n');
       await this.board.addComment(card.id,
-        `❌ **Review found issues** — ${projectLabel} ([PR #${prNumber}](${prUrl}))\n\n**Summary:** ${result.summary}\n\n**Issues:**\n${issuesText}`
+        `❌ **Review found issues** — ${projectLabel} (${prLink})\n\n**Summary:** ${result.summary}\n\n**Issues:**\n${issuesText}`
       );
     }
 
