@@ -292,7 +292,7 @@ function tailLogs(options: { level?: string }): void {
     }
   };
 
-  watchFile(logPath, { interval: 500 }, (curr) => {
+  watchFile(logPath, { interval: 100 }, (curr) => {
     if (curr.size < lastSize) {
       // File was rotated/truncated — reset to read from beginning
       lastSize = 0;
