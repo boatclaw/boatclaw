@@ -15,10 +15,13 @@ import { Command } from 'commander';
 import chalk from 'chalk';
 import inquirer from 'inquirer';
 import * as readline from 'readline';
+import { existsSync, mkdirSync, rmSync, readdirSync, readFileSync, writeFileSync } from 'fs';
+import { join } from 'path';
+import { tmpdir } from 'os';
 import { configManager, type RoleConfig, type ProjectConfig } from '../../core/config.js';
 import { isInitialized } from '../../core/paths.js';
 import * as ui from '../ui.js';
-import { createTaskProcessor } from '../../ai/task-processor.js';
+import { createTaskProcessor, type TaskProcessorOptions } from '../../ai/task-processor.js';
 import { createAIProvider } from '../../ai/index.js';
 import { createReviewerAgent } from '../../github/reviewer.js';
 import { GitHubClient } from '../../github/client.js';
@@ -293,7 +296,8 @@ export function registerAgentsCommands(program: Command): void {
     .option('--no-pr', 'Skip PR creation')
     .option('--review', 'Run AI review after (default: yes)')
     .option('--no-review', 'Skip review')
-    .action(async (name: string | undefined, options: { project?: string; pr?: boolean; review?: boolean }) => {
+    .option('-i, --interactive', 'Enable interactive mode — AI can ask questions (Claude only)')
+    .action(async (name: string | undefined, options: { project?: string; pr?: boolean; review?: boolean; interactive?: boolean }) => {
       if (!isInitialized()) {
         ui.error('Boatclaw is not configured.');
         ui.info(`Run ${chalk.cyan('boatclaw setup')} first.`);
@@ -685,7 +689,7 @@ async function readTaskInput(): Promise<string> {
   });
 }
 
-async function askAgent(name: string | undefined, options: { project?: string; pr?: boolean; review?: boolean }): Promise<void> {
+async function askAgent(name: string | undefined, options: { project?: string; pr?: boolean; review?: boolean; interactive?: boolean }): Promise<void> {
   const existingAgents = configManager.getRoles();
   const agentNames = Object.keys(existingAgents);
 
@@ -765,12 +769,20 @@ async function askAgent(name: string | undefined, options: { project?: string; p
     }
   }
 
+  // Determine interactive mode (Claude only)
+  const provider = agent.provider || config.ai.provider || 'claude';
+  const interactiveEnabled = !!(options.interactive && provider === 'claude');
+  if (options.interactive && provider !== 'claude') {
+    ui.warning('Interactive mode is only supported with Claude. Continuing without it.');
+  }
+
   // Show header
   const projectNames = agentProjects.map(p => p.name).join(', ');
+  const interactiveLabel = interactiveEnabled ? ' | Interactive' : '';
   console.log();
   console.log(chalk.cyan('  ┌' + '─'.repeat(50) + '┐'));
   console.log(chalk.cyan('  │') + chalk.bold(` Boatclaw — ${agent.name}`.padEnd(50)) + chalk.cyan('│'));
-  console.log(chalk.cyan('  │') + chalk.dim(` Model: ${agent.model} | PR: ${createPRs ? 'yes' : 'no'} | Review: ${runReview ? 'yes' : 'no'}`.padEnd(50)) + chalk.cyan('│'));
+  console.log(chalk.cyan('  │') + chalk.dim(` Model: ${agent.model} | PR: ${createPRs ? 'yes' : 'no'} | Review: ${runReview ? 'yes' : 'no'}${interactiveLabel}`.padEnd(50)) + chalk.cyan('│'));
   console.log(chalk.cyan('  │') + chalk.dim(` Projects: ${projectNames}`.slice(0, 52).padEnd(50)) + chalk.cyan('│'));
   console.log(chalk.cyan('  └' + '─'.repeat(50) + '┘'));
   console.log();
@@ -808,11 +820,42 @@ async function askAgent(name: string | undefined, options: { project?: string; p
   console.log(chalk.dim(`  Projects: ${projectNames}`));
   console.log();
 
+  // Set up interactive mode (file-based ask/answer for terminal)
+  let askDir: string | undefined;
+  let askWatcherCleanup: (() => void) | undefined;
+
+  if (interactiveEnabled) {
+    askDir = join(tmpdir(), `boatclaw-ask-${Date.now()}`);
+    mkdirSync(askDir, { recursive: true });
+    askWatcherCleanup = startAskWatcher(askDir);
+
+    // Cleanup on unexpected exit (Ctrl+C, crash)
+    const cleanupOnExit = () => {
+      if (askWatcherCleanup) askWatcherCleanup();
+      if (askDir && existsSync(askDir)) rmSync(askDir, { recursive: true, force: true });
+    };
+    process.on('SIGINT', cleanupOnExit);
+    process.on('SIGTERM', cleanupOnExit);
+    process.on('exit', cleanupOnExit);
+  }
+
   // Create task processor (same as worker)
-  const processor = createTaskProcessor({
+  const processorOptions: TaskProcessorOptions = {
     createPRs: createPRs && githubEnabled,
     githubToken: config.github.token,
-  });
+    interactive: interactiveEnabled,
+  };
+
+  // For interactive terminal mode, override the MCP config to use file-based provider
+  if (interactiveEnabled && askDir) {
+    processorOptions.mcpConfig = {
+      cardId: card.id,
+      boardProvider: 'terminal',
+      askDir,
+    };
+  }
+
+  const processor = createTaskProcessor(processorOptions);
 
   // Check AI availability
   if (!(await processor.isAvailable())) {
@@ -929,6 +972,14 @@ async function askAgent(name: string | undefined, options: { project?: string; p
     }
   }
 
+  // Clean up interactive watcher
+  if (askWatcherCleanup) {
+    askWatcherCleanup();
+  }
+  if (askDir && existsSync(askDir)) {
+    rmSync(askDir, { recursive: true, force: true });
+  }
+
   // --- Final summary ---
   const totalDuration = Math.round((Date.now() - startTime) / 1000);
   console.log();
@@ -950,6 +1001,83 @@ async function askAgent(name: string | undefined, options: { project?: string; p
   }
 
   console.log();
+}
+
+/**
+ * Watch the ask directory for questions from the MCP server.
+ * When a .comment file appears with a question, prompt the user in the terminal
+ * and write their answer as a .answer file.
+ */
+function startAskWatcher(askDir: string): () => void {
+  const seenFiles = new Set<string>();
+  let stopped = false;
+
+  const poll = async () => {
+    while (!stopped) {
+      try {
+        if (existsSync(askDir)) {
+          const files = readdirSync(askDir).filter(f => f.endsWith('.comment'));
+
+          for (const file of files) {
+            if (seenFiles.has(file)) continue;
+            seenFiles.add(file);
+
+            // Read the comment
+            const filePath = join(askDir, file);
+            const data = JSON.parse(readFileSync(filePath, 'utf-8'));
+            const text: string = data.text;
+
+            // Check if this is a question (from ask_human tool)
+            if (text.includes('Question from AI:')) {
+              // Extract the question text
+              const questionText = text
+                .replace(/🤖\s*Question from AI:\s*/g, '')
+                .replace(/---[\s\S]*$/, '')
+                .trim();
+
+              console.log();
+              console.log(chalk.yellow('  🤖 AI is asking:'));
+              console.log(chalk.bold(`  ${questionText}`));
+              console.log();
+
+              // Read answer from user
+              const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+              const answer = await new Promise<string>((resolve) => {
+                rl.question(chalk.cyan('  Your answer: '), (ans) => {
+                  rl.close();
+                  resolve(ans);
+                });
+              });
+
+              // Write answer file
+              const answerId = file.replace('.comment', '');
+              const answerPath = join(askDir, `${answerId}.answer`);
+              writeFileSync(answerPath, JSON.stringify({
+                id: `answer-${answerId}`,
+                text: `Answer: ${answer}`,
+                authorName: 'Human',
+                createdAt: new Date().toISOString(),
+              }));
+            } else {
+              // Regular update — just print it
+              const clean = text.replace(/\*\*(.+?)\*\*/g, '$1');
+              console.log(chalk.dim('  │ ') + clean.split('\n').join('\n' + chalk.dim('  │ ')));
+            }
+          }
+        }
+      } catch {
+        // Ignore poll errors
+      }
+
+      await new Promise(r => setTimeout(r, 500));
+    }
+  };
+
+  // Start polling in background
+  poll();
+
+  // Return cleanup function
+  return () => { stopped = true; };
 }
 
 function listAgents(): void {

@@ -6,11 +6,13 @@
  *
  * Usage:
  *   node mcp-server.js --card-id CARD123 --provider trello
+ *   node mcp-server.js --card-id terminal-123 --provider terminal --ask-dir /tmp/boatclaw-ask-xxx
  */
 
 import { startAskHumanServer } from './mcp/index.js';
 import { configManager } from './core/config.js';
 import { createBoardProvider } from './platforms/factory.js';
+import { createFileBoardProvider } from './mcp/file-board-provider.js';
 
 async function main(): Promise<void> {
   // Parse command line arguments
@@ -24,25 +26,31 @@ async function main(): Promise<void> {
   }
 
   const cardId = argMap.get('card-id');
-  const providerType = argMap.get('provider') as 'trello' | 'jira' | 'linear';
+  const providerType = argMap.get('provider') as 'trello' | 'jira' | 'linear' | 'terminal';
+  const askDir = argMap.get('ask-dir');
 
   if (!cardId || !providerType) {
-    console.error('Usage: mcp-server --card-id CARD_ID --provider trello|jira|linear');
+    console.error('Usage: mcp-server --card-id CARD_ID --provider trello|jira|linear|terminal');
     process.exit(1);
   }
 
   try {
-    // Load config
-    const config = configManager.load();
+    let boardProvider;
 
-    // Create board provider
-    const boardProvider = createBoardProvider(providerType, config);
+    if (providerType === 'terminal' && askDir) {
+      // Terminal mode: use file-based board provider
+      boardProvider = createFileBoardProvider(askDir);
+    } else {
+      // Board mode: load config and create real provider
+      const config = configManager.load();
+      boardProvider = createBoardProvider(providerType as 'trello' | 'jira' | 'linear', config);
+    }
 
     // Start MCP server
     await startAskHumanServer({
       cardId,
       boardProvider,
-      pollIntervalMs: 5000,   // Poll every 5 seconds
+      pollIntervalMs: providerType === 'terminal' ? 1000 : 5000, // Poll faster in terminal
       timeoutMs: 1800000,     // 30 minute timeout
     });
   } catch (error) {

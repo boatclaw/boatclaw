@@ -10,3 +10,7 @@ export {
   startAskHumanServer,
   type AskHumanServerOptions,
 } from './ask-human-server.js';
+
+export {
+  createFileBoardProvider,
+} from './file-board-provider.js';
