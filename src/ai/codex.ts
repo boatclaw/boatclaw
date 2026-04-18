@@ -17,19 +17,15 @@ import {
 
 /**
  * Model mapping for Codex CLI.
- * Maps boatclaw's model tiers to OpenAI model names.
- *
- * Available models (use `codex --list-models` to verify):
- * - gpt-5.4 — flagship, coding + reasoning
- * - gpt-5.4-mini — fast, lower cost
- * - gpt-5.3-codex — specialized agentic coding
- * - gpt-5.2 — previous general model
+ * Uses simple tier names — Codex resolves them to the best available model.
+ * Use `codex --list-models` to see all available models.
+ * Users can also specify exact model names in config (passed through directly).
  */
 export const CODEX_MODELS: Record<string, string> = {
-  haiku: 'gpt-5.4-mini',
-  sonnet: 'gpt-5.4',
-  opus: 'gpt-5.3-codex',
-  auto: 'gpt-5.4',
+  haiku: 'haiku',
+  sonnet: 'sonnet',
+  opus: 'opus',
+  auto: 'default',
 };
 
 /**
