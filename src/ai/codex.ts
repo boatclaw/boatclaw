@@ -1,8 +1,9 @@
 /**
  * OpenAI Codex CLI provider implementation.
  *
- * Executes tasks using the OpenAI Codex CLI (codex command).
- * https://github.com/openai/codex
+ * Executes tasks using the Codex CLI (`codex exec` command).
+ * Install: npm install -g @openai/codex
+ * Docs: https://developers.openai.com/codex/cli/reference
  */
 
 import { spawn } from 'child_process';
@@ -16,17 +17,20 @@ import {
 
 /**
  * Model mapping for Codex CLI.
+ * Use the latest available models from OpenAI.
  */
 export const CODEX_MODELS: Record<string, string> = {
-  // Map our model names to OpenAI models
-  haiku: 'gpt-4o-mini',      // Fast, simple tasks
-  sonnet: 'gpt-4o',          // Default, balanced
-  opus: 'o1',                // Complex reasoning
-  auto: 'gpt-4o',            // Default
+  haiku: 'gpt-5.4-mini',
+  sonnet: 'gpt-5.4',
+  opus: 'gpt-5.3-codex',
+  auto: 'gpt-5.4',
 };
 
 /**
  * Codex CLI provider.
+ *
+ * Uses `codex exec` for non-interactive headless execution.
+ * Runs with --full-auto to auto-approve file writes and commands.
  */
 export class CodexProvider implements AIProvider {
   readonly name = 'codex';
@@ -36,7 +40,7 @@ export class CodexProvider implements AIProvider {
 
   constructor(options?: { defaultModel?: Model; timeoutSeconds?: number }) {
     this.defaultModel = options?.defaultModel || 'sonnet';
-    this.defaultTimeoutMs = (options?.timeoutSeconds || 1800) * 1000; // 30 min default
+    this.defaultTimeoutMs = (options?.timeoutSeconds || 1800) * 1000;
   }
 
   /**
@@ -137,7 +141,6 @@ export class CodexProvider implements AIProvider {
       const timeoutId = setTimeout(() => {
         resolved = true;
         proc.kill('SIGTERM');
-        // SIGKILL after 5s grace period if process doesn't exit
         setTimeout(() => {
           try { proc.kill('SIGKILL'); } catch { /* already dead */ }
         }, 5000);
@@ -175,14 +178,13 @@ export class CodexProvider implements AIProvider {
         resolve({
           success: false,
           output: stdout,
-          error: `Failed to spawn codex: ${error.message}`,
+          error: `Failed to spawn codex: ${error.message}. Install: npm install -g @openai/codex`,
           model: modelName,
           durationMs: Date.now() - startTime,
         });
       });
 
-      // Send prompt to stdin
-      proc.stdin?.write(options.prompt);
+      // Prompt is passed as trailing argument, not stdin
       proc.stdin?.end();
     });
   }
@@ -192,12 +194,14 @@ export class CodexProvider implements AIProvider {
    */
   private buildArgs(options: ExecutionOptions, modelName: string): string[] {
     const args: string[] = [
-      // Quiet/non-interactive mode
-      '--quiet',
-      // Full auto-approval mode
-      '--approval-mode', 'full-auto',
+      // Use exec subcommand for non-interactive mode
+      'exec',
+      // Full auto — auto-approve file writes and commands
+      '--full-auto',
       // Model selection
       '--model', modelName,
+      // Prompt as trailing argument
+      options.prompt,
     ];
 
     return args;

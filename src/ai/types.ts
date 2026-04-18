@@ -13,9 +13,9 @@ export type Model = 'haiku' | 'sonnet' | 'opus' | 'auto';
  * Model mapping for Claude CLI.
  */
 export const CLAUDE_MODELS: Record<string, string> = {
-  haiku: 'claude-3-haiku-20240307',
-  sonnet: 'claude-sonnet-4-20250514',
-  opus: 'claude-opus-4-20250514',
+  haiku: 'claude-haiku-4-5-20251001',
+  sonnet: 'claude-sonnet-4-5-20250514',
+  opus: 'claude-opus-4-5-20250514',
 };
 
 /**
