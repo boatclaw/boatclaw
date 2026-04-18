@@ -17,7 +17,14 @@ import {
 
 /**
  * Model mapping for Cursor CLI.
+ * Maps boatclaw's model tiers to Cursor's model names.
  * Use `agent --list-models` to see all available models.
+ *
+ * Cursor supports models from multiple providers:
+ * - Anthropic: claude-sonnet-4-5, claude-opus-4-5, claude-haiku-4-5
+ * - OpenAI: gpt-5.4, gpt-5.3-codex, gpt-5.2
+ * - Google: gemini-3-pro
+ * - xAI: grok-code
  */
 export const CURSOR_MODELS: Record<string, string> = {
   haiku: 'claude-haiku-4-5',
@@ -98,10 +105,11 @@ export class CursorProvider implements AIProvider {
     const model = options.model || this.defaultModel;
     const timeoutMs = options.timeoutMs || this.defaultTimeoutMs;
 
-    // Resolve model name
+    // Resolve model name — pass through directly if not in the map
+    // This lets users specify exact model names like 'gpt-5.4' or 'gemini-3-pro'
     const modelName = model === 'auto'
       ? CURSOR_MODELS['sonnet']
-      : CURSOR_MODELS[model] || CURSOR_MODELS['sonnet'];
+      : CURSOR_MODELS[model] || model;
 
     // Build command arguments
     const args = this.buildArgs(options, modelName);

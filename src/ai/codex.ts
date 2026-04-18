@@ -17,7 +17,13 @@ import {
 
 /**
  * Model mapping for Codex CLI.
- * Use the latest available models from OpenAI.
+ * Maps boatclaw's model tiers to OpenAI model names.
+ *
+ * Available models (use `codex --list-models` to verify):
+ * - gpt-5.4 — flagship, coding + reasoning
+ * - gpt-5.4-mini — fast, lower cost
+ * - gpt-5.3-codex — specialized agentic coding
+ * - gpt-5.2 — previous general model
  */
 export const CODEX_MODELS: Record<string, string> = {
   haiku: 'gpt-5.4-mini',
@@ -98,8 +104,9 @@ export class CodexProvider implements AIProvider {
     const model = options.model || this.defaultModel;
     const timeoutMs = options.timeoutMs || this.defaultTimeoutMs;
 
-    // Resolve model name
-    const modelName = CODEX_MODELS[model] || CODEX_MODELS['sonnet'];
+    // Resolve model name — pass through directly if not in the map
+    // This lets users specify exact model names like 'gpt-5.2' or 'o1'
+    const modelName = CODEX_MODELS[model] || model;
 
     // Build command arguments
     const args = this.buildArgs(options, modelName);
