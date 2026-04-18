@@ -879,6 +879,16 @@ async function askAgent(name: string | undefined, options: { project?: string; p
     return;
   }
 
+  // Handle Ctrl+C — stop spinner and exit cleanly
+  const handleInterrupt = () => {
+    if (spinner) spinner.stop();
+    console.log();
+    console.log(chalk.yellow('  ⚠ Interrupted. Cleaning up...'));
+    // Force exit — child processes (non-detached) are killed by the OS
+    process.exit(130);
+  };
+  process.on('SIGINT', handleInterrupt);
+
   // Process task across all projects
   const spinner = ora({ text: `Working on ${projectNames}...`, prefixText: ' ', color: 'cyan' }).start();
 
@@ -895,12 +905,40 @@ async function askAgent(name: string | undefined, options: { project?: string; p
         line += chalk.red(` — ${projectResult.error}`);
       }
       console.log(line);
+
+      // Show AI output summary
+      if (projectResult.output && projectResult.success) {
+        // Try tagged summary first, then legacy, then last meaningful lines
+        const taggedMatch = projectResult.output.match(/<!-- BOATCLAW_SUMMARY_START -->([\s\S]*?)<!-- BOATCLAW_SUMMARY_END -->/);
+        const legacyMatch = projectResult.output.match(/\*\*What was done:?\*\*[\s\S]*?^---$/im);
+        const summary = taggedMatch ? taggedMatch[1].trim()
+          : legacyMatch ? legacyMatch[0].trim()
+          : null;
+
+        if (summary) {
+          // Print structured summary with border
+          const clean = summary.replace(/\*\*(.+?)\*\*/g, '$1').replace(/^---$/gm, '');
+          const lines = clean.split('\n').filter(l => l.trim());
+          for (const l of lines) {
+            console.log(chalk.dim('  │ ') + l.trim());
+          }
+        } else {
+          // Show last few meaningful lines of output
+          const lines = projectResult.output.split('\n').filter(l => l.trim()).slice(-5);
+          for (const l of lines) {
+            console.log(chalk.dim('  │ ') + l.trim().slice(0, 100));
+          }
+        }
+      }
+
+      console.log();
       // Restart spinner for next project if there are more
       spinner.start(`Working...`);
     },
   });
 
   spinner.stop();
+  process.removeListener('SIGINT', handleInterrupt);
 
   // --- Review phase ---
   const prUrls: { project: string; prUrl: string; prNumber: number; repo: string }[] = [];
