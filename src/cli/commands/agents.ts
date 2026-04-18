@@ -8,7 +8,7 @@
  * - agents enable <name>: Enable an agent
  * - agents disable <name>: Disable an agent
  * - agents context <name>: Add/edit agent context
- * - agents ask <name>: Interactive chat with an agent
+ * - agents ask [name]: Run a task with an agent from the terminal
  */
 
 import { Command } from 'commander';
