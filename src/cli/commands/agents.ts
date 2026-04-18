@@ -14,6 +14,7 @@
 import { Command } from 'commander';
 import chalk from 'chalk';
 import inquirer from 'inquirer';
+import ora from 'ora';
 import * as readline from 'readline';
 import { existsSync, mkdirSync, rmSync, readdirSync, readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
@@ -663,28 +664,43 @@ function createTerminalBoardProvider(): BoardProvider {
 }
 
 /**
- * Read multi-line input from the terminal.
- * User types their task description, empty line to submit.
+ * Read task description from the user.
+ * Same style as context input — bordered, with prompt prefix.
  */
 async function readTaskInput(): Promise<string> {
-  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-  const lines: string[] = [];
-
-  console.log(chalk.dim('  Describe the task (empty line to submit):'));
   console.log();
+  console.log(chalk.bold('  Describe the task:'));
+  console.log(chalk.dim('  Type your task. Press Enter for new line. Empty line to submit.'));
+  console.log(chalk.cyan('  ─'.repeat(25)));
 
   return new Promise((resolve) => {
-    rl.on('line', (line) => {
+    const rl = readline.createInterface({
+      input: process.stdin,
+      output: process.stdout,
+      prompt: chalk.cyan('  │ '),
+    });
+
+    const lines: string[] = [];
+
+    rl.prompt();
+
+    rl.on('line', (line: string) => {
       if (line === '' && lines.length > 0) {
         rl.close();
-        resolve(lines.join('\n'));
-      } else {
+        console.log(chalk.cyan('  ─'.repeat(25)));
+        resolve(lines.join('\n').trim());
+        return;
+      }
+
+      if (line !== '' || lines.length > 0) {
         lines.push(line);
       }
+      rl.prompt();
     });
 
     rl.on('close', () => {
-      resolve(lines.join('\n'));
+      console.log(chalk.cyan('  ─'.repeat(25)));
+      resolve(lines.join('\n').trim());
     });
   });
 }
@@ -864,8 +880,11 @@ async function askAgent(name: string | undefined, options: { project?: string; p
   }
 
   // Process task across all projects
+  const spinner = ora({ text: `Working on ${projectNames}...`, prefixText: ' ', color: 'cyan' }).start();
+
   const result = await processor.processMultiProject(card, agent, agentProjects, {
     onProjectComplete: async (projectResult) => {
+      spinner.stop();
       const status = projectResult.success ? chalk.green('✅') : chalk.red('❌');
       const duration = `${Math.round(projectResult.durationMs / 1000)}s`;
       let line = `  ${status} ${chalk.bold(projectResult.projectName)} — ${duration}`;
@@ -876,8 +895,12 @@ async function askAgent(name: string | undefined, options: { project?: string; p
         line += chalk.red(` — ${projectResult.error}`);
       }
       console.log(line);
+      // Restart spinner for next project if there are more
+      spinner.start(`Working...`);
     },
   });
+
+  spinner.stop();
 
   // --- Review phase ---
   const prUrls: { project: string; prUrl: string; prNumber: number; repo: string }[] = [];
@@ -894,7 +917,7 @@ async function askAgent(name: string | undefined, options: { project?: string; p
 
   if (runReview && result.success) {
     console.log();
-    console.log(chalk.bold('  Review started...'));
+    const reviewSpinner = ora({ text: 'Reviewing...', prefixText: ' ', color: 'yellow' }).start();
 
     const aiProvider = createAIProvider({
       provider: (config.ai.provider || 'claude') as 'claude' | 'cursor' | 'codex',
@@ -960,6 +983,7 @@ async function askAgent(name: string | undefined, options: { project?: string; p
     }
 
     // Show review summary
+    reviewSpinner.stop();
     const allApproved = reviewResults.length === 0 || reviewResults.every(r => r.approved);
     if (allApproved) {
       console.log(chalk.green('  ✅ All reviews passed'));

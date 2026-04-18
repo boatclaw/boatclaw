@@ -151,28 +151,43 @@ export class ReviewerAgent {
       return;
     }
 
-    if (reviewResult.approved) {
-      await this.github.approvePR({
-        prNumber,
-        body: `✅ **Approved**\n\n${reviewResult.summary}`,
-        repo,
-      });
-    } else {
-      // Format body with issues
-      const bodyParts = [
-        `❌ **Changes Requested**\n\n${reviewResult.summary}`,
-        '',
-        '## Issues Found',
-        '',
-        ...reviewResult.issues.map((issue) => `- ${issue}`),
-      ];
+    try {
+      if (reviewResult.approved) {
+        await this.github.approvePR({
+          prNumber,
+          body: `✅ **Approved**\n\n${reviewResult.summary}`,
+          repo,
+        });
+      } else {
+        // Format body with issues
+        const bodyParts = [
+          `❌ **Changes Requested**\n\n${reviewResult.summary}`,
+          '',
+          '## Issues Found',
+          '',
+          ...reviewResult.issues.map((issue) => `- ${issue}`),
+        ];
 
-      await this.github.requestChanges({
-        prNumber,
-        body: bodyParts.join('\n'),
-        comments: reviewResult.lineComments,
-        repo,
-      });
+        await this.github.requestChanges({
+          prNumber,
+          body: bodyParts.join('\n'),
+          comments: reviewResult.lineComments,
+          repo,
+        });
+      }
+    } catch (error) {
+      // GitHub doesn't allow requesting changes on your own PR.
+      // Fall back to posting a regular comment instead.
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      if (errorMessage.includes('own pull request') || errorMessage.includes('422')) {
+        const body = reviewResult.approved
+          ? `✅ **Review passed**\n\n${reviewResult.summary}`
+          : `❌ **Review found issues**\n\n${reviewResult.summary}\n\n**Issues:**\n${reviewResult.issues.map(i => `- ${i}`).join('\n')}`;
+
+        await this.github.addPRComment({ prNumber, body, repo });
+      } else {
+        throw error;
+      }
     }
   }
 
