@@ -828,6 +828,15 @@ async function askAgent(name: string | undefined, options: { project?: string; p
     askDir = join(tmpdir(), `boatclaw-ask-${Date.now()}`);
     mkdirSync(askDir, { recursive: true });
     askWatcherCleanup = startAskWatcher(askDir);
+
+    // Cleanup on unexpected exit (Ctrl+C, crash)
+    const cleanupOnExit = () => {
+      if (askWatcherCleanup) askWatcherCleanup();
+      if (askDir && existsSync(askDir)) rmSync(askDir, { recursive: true, force: true });
+    };
+    process.on('SIGINT', cleanupOnExit);
+    process.on('SIGTERM', cleanupOnExit);
+    process.on('exit', cleanupOnExit);
   }
 
   // Create task processor (same as worker)
