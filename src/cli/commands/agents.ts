@@ -8,17 +8,21 @@
  * - agents enable <name>: Enable an agent
  * - agents disable <name>: Disable an agent
  * - agents context <name>: Add/edit agent context
- * - agents ask <name>: Interactive chat with an agent
+ * - agents ask [name]: Run a task with an agent from the terminal
  */
 
 import { Command } from 'commander';
 import chalk from 'chalk';
 import inquirer from 'inquirer';
 import * as readline from 'readline';
-import { spawn } from 'child_process';
-import { configManager, type RoleConfig } from '../../core/config.js';
+import { configManager, type RoleConfig, type ProjectConfig } from '../../core/config.js';
 import { isInitialized } from '../../core/paths.js';
 import * as ui from '../ui.js';
+import { createTaskProcessor } from '../../ai/task-processor.js';
+import { createAIProvider } from '../../ai/index.js';
+import { createReviewerAgent } from '../../github/reviewer.js';
+import { GitHubClient } from '../../github/client.js';
+import type { Card, BoardProvider, CardOperationResult, Comment } from '../../platforms/types.js';
 
 export function registerAgentsCommands(program: Command): void {
   const agents = program
@@ -280,19 +284,23 @@ export function registerAgentsCommands(program: Command): void {
       ui.success(`Agent "${name}" scope updated: ${newScope}`);
     });
 
-  // Ask agent (interactive chat)
+  // Ask agent (run full pipeline from terminal)
   agents
-    .command('ask <name>')
-    .description('Start interactive chat with an agent')
-    .option('-p, --project <project>', 'Project context to use')
-    .action(async (name: string, options: { project?: string }) => {
+    .command('ask [name]')
+    .description('Run a task with an agent from the terminal')
+    .option('-p, --project <project>', 'Limit to a specific project')
+    .option('--pr', 'Create PR (default: yes if GitHub enabled)')
+    .option('--no-pr', 'Skip PR creation')
+    .option('--review', 'Run AI review after (default: yes)')
+    .option('--no-review', 'Skip review')
+    .action(async (name: string | undefined, options: { project?: string; pr?: boolean; review?: boolean }) => {
       if (!isInitialized()) {
         ui.error('Boatclaw is not configured.');
         ui.info(`Run ${chalk.cyan('boatclaw setup')} first.`);
         return;
       }
 
-      await askAgent(name, options.project);
+      await askAgent(name, options);
     });
 }
 
@@ -622,135 +630,326 @@ async function inputContextInline(prompt: string): Promise<string> {
   });
 }
 
-async function askAgent(name: string, projectName?: string): Promise<void> {
-  const existingAgents = configManager.getRoles();
+/**
+ * Create a terminal-based board provider that prints comments to console.
+ * Used by the reviewer when running from the terminal (no real board).
+ */
+function createTerminalBoardProvider(): BoardProvider {
+  return {
+    name: 'terminal',
+    verifyConnection: async () => true,
+    getBoard: async () => ({ id: '', name: 'Terminal', url: '', lists: [] }),
+    getLists: async () => [],
+    getCards: async () => [],
+    getCard: async () => null,
+    moveCard: async (): Promise<CardOperationResult> => ({ success: true }),
+    addComment: async (_cardId: string, text: string): Promise<CardOperationResult> => {
+      // Strip markdown bold for terminal display
+      const clean = text.replace(/\*\*(.+?)\*\*/g, '$1');
+      console.log(chalk.dim('  │ ') + clean.split('\n').join('\n' + chalk.dim('  │ ')));
+      return { success: true };
+    },
+    getComments: async (): Promise<Comment[]> => [],
+    updateDescription: async (): Promise<CardOperationResult> => ({ success: true }),
+    addLabel: async (): Promise<CardOperationResult> => ({ success: true }),
+    removeLabel: async (): Promise<CardOperationResult> => ({ success: true }),
+    getLabels: async () => [],
+    close: async () => {},
+  };
+}
 
-  if (!(name in existingAgents)) {
-    ui.error(`Agent "${name}" not found.`);
-    const available = Object.keys(existingAgents);
-    if (available.length > 0) {
-      ui.info('Available agents: ' + available.join(', '));
-    }
-    return;
-  }
+/**
+ * Read multi-line input from the terminal.
+ * User types their task description, empty line to submit.
+ */
+async function readTaskInput(): Promise<string> {
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  const lines: string[] = [];
 
-  const agent = existingAgents[name];
-  const projects = configManager.getProjects();
-  const projectList = Object.values(projects);
+  console.log(chalk.dim('  Describe the task (empty line to submit):'));
+  console.log();
 
-  // Determine which project to use
-  let project = projectName ? projects[projectName] : undefined;
-
-  if (projectName && !project) {
-    ui.error(`Project "${projectName}" not found.`);
-    return;
-  }
-
-  // If no project specified, determine from agent's scope or ask
-  if (!project) {
-    if (agent.projects && !agent.projects.includes('*')) {
-      // Agent has specific project scope - use first one
-      const firstProject = agent.projects[0];
-      if (firstProject && projects[firstProject]) {
-        project = projects[firstProject];
+  return new Promise((resolve) => {
+    rl.on('line', (line) => {
+      if (line === '' && lines.length > 0) {
+        rl.close();
+        resolve(lines.join('\n'));
+      } else {
+        lines.push(line);
       }
-    } else if (projectList.length === 1) {
-      // Only one project - use it
-      project = projectList[0];
-    } else if (projectList.length > 1) {
-      // Multiple projects - ask user to select
-      const { selected } = await inquirer.prompt([{
-        type: 'list',
-        name: 'selected',
-        message: 'Select project to work in:',
-        choices: projectList.map((p) => ({ name: `${p.name} (${p.path})`, value: p.name })),
-      }]);
-      project = projects[selected];
+    });
+
+    rl.on('close', () => {
+      resolve(lines.join('\n'));
+    });
+  });
+}
+
+async function askAgent(name: string | undefined, options: { project?: string; pr?: boolean; review?: boolean }): Promise<void> {
+  const existingAgents = configManager.getRoles();
+  const agentNames = Object.keys(existingAgents);
+
+  if (agentNames.length === 0) {
+    ui.error('No agents configured.');
+    ui.info(`Run ${chalk.cyan('boatclaw agents add')} to create one.`);
+    return;
+  }
+
+  // Select agent if not specified
+  let agentName = name;
+  if (!agentName) {
+    const { selected } = await inquirer.prompt([{
+      type: 'list',
+      name: 'selected',
+      message: 'Select agent:',
+      choices: agentNames.map(n => {
+        const a = existingAgents[n];
+        return { name: `${n} (${a.labels.join(', ')})`, value: n };
+      }),
+    }]);
+    agentName = selected;
+  }
+
+  if (!(agentName! in existingAgents)) {
+    ui.error(`Agent "${agentName}" not found.`);
+    ui.info('Available: ' + agentNames.join(', '));
+    return;
+  }
+
+  const agent = existingAgents[agentName!];
+  const config = configManager.load();
+  const allProjects = config.projects;
+
+  // Resolve projects for this agent
+  let agentProjects: ProjectConfig[] = [];
+  if (options.project) {
+    const p = allProjects[options.project];
+    if (!p) {
+      ui.error(`Project "${options.project}" not found.`);
+      return;
+    }
+    agentProjects = [p];
+  } else if (agent.projects.includes('*')) {
+    agentProjects = Object.values(allProjects);
+  } else {
+    agentProjects = agent.projects
+      .map(n => allProjects[n])
+      .filter((p): p is ProjectConfig => !!p);
+  }
+
+  if (agentProjects.length === 0) {
+    ui.error('No valid projects found for this agent.');
+    return;
+  }
+
+  // Determine GitHub and review settings
+  const githubEnabled = config.github.enabled && !!config.github.token;
+  let createPRs = options.pr !== undefined ? options.pr : githubEnabled;
+  let runReview = options.review !== undefined ? options.review : true;
+
+  // Ask user if flags not explicitly set
+  if (options.pr === undefined && options.review === undefined) {
+    if (githubEnabled) {
+      const answers = await inquirer.prompt([
+        { type: 'confirm', name: 'pr', message: 'Create PR?', default: true },
+        { type: 'confirm', name: 'review', message: 'Run AI review?', default: true },
+      ]);
+      createPRs = answers.pr;
+      runReview = answers.review;
+    } else {
+      const { review } = await inquirer.prompt([
+        { type: 'confirm', name: 'review', message: 'Run AI review?', default: true },
+      ]);
+      createPRs = false;
+      runReview = review;
     }
   }
 
-  // Use project path or current directory
-  const projectPath = project?.path || process.cwd();
-
-  // Build context from agent + project
-  const contextParts: string[] = [];
-
-  if (agent.context) {
-    contextParts.push(`Agent context (${agent.name}):\n${agent.context}`);
-  }
-
-  if (project?.context) {
-    contextParts.push(`Project context (${project.name}):\n${project.context}`);
-  }
-
-  const fullContext = contextParts.join('\n\n---\n\n');
-
-  // Get provider (agent's provider or default)
-  const provider = agent.provider || configManager.get<string>('ai.provider') || 'claude';
-
+  // Show header
+  const projectNames = agentProjects.map(p => p.name).join(', ');
   console.log();
   console.log(chalk.cyan('  ┌' + '─'.repeat(50) + '┐'));
-  console.log(chalk.cyan('  │') + chalk.bold(` Chat with ${agent.name}`.padEnd(50)) + chalk.cyan('│'));
-  console.log(chalk.cyan('  │') + chalk.dim(` Provider: ${provider}, Model: ${agent.model}`.padEnd(50)) + chalk.cyan('│'));
-  if (project) {
-    console.log(chalk.cyan('  │') + chalk.dim(` Project: ${project.name}`.padEnd(50)) + chalk.cyan('│'));
-  }
-  console.log(chalk.cyan('  │') + chalk.dim(` Path: ${projectPath}`.slice(0, 51).padEnd(50)) + chalk.cyan('│'));
-  const hasContext = agent.context || project?.context;
-  console.log(chalk.cyan('  │') + chalk.dim(` Context: ${hasContext ? '✓ Loaded' : 'None'}`.padEnd(50)) + chalk.cyan('│'));
+  console.log(chalk.cyan('  │') + chalk.bold(` Boatclaw — ${agent.name}`.padEnd(50)) + chalk.cyan('│'));
+  console.log(chalk.cyan('  │') + chalk.dim(` Model: ${agent.model} | PR: ${createPRs ? 'yes' : 'no'} | Review: ${runReview ? 'yes' : 'no'}`.padEnd(50)) + chalk.cyan('│'));
+  console.log(chalk.cyan('  │') + chalk.dim(` Projects: ${projectNames}`.slice(0, 52).padEnd(50)) + chalk.cyan('│'));
   console.log(chalk.cyan('  └' + '─'.repeat(50) + '┘'));
   console.log();
 
-  // Spawn Claude CLI
-  const cliCommand = provider === 'cursor' ? 'cursor' : 'claude';
-
-  // Build command args
-  const args: string[] = [];
-
-  // Add model if not auto
-  if (agent.model && agent.model !== 'auto') {
-    args.push('--model', agent.model);
+  // Get task description from user
+  const taskInput = await readTaskInput();
+  if (!taskInput.trim()) {
+    ui.error('No task description provided.');
+    return;
   }
 
-  // Add system prompt with context
-  if (fullContext) {
-    args.push('--system-prompt', fullContext);
-  }
+  // Build a fake Card from the terminal input
+  const firstLine = taskInput.split('\n')[0].trim();
+  const card: Card = {
+    id: `terminal-${Date.now()}`,
+    title: firstLine,
+    description: taskInput,
+    url: '',
+    labels: agent.labels.map(l => ({ id: l, name: l })),
+    listId: '',
+    listName: '',
+    position: 0,
+    createdAt: new Date(),
+    updatedAt: new Date(),
+    assignees: [],
+    metadata: {},
+  };
 
-  // Spawn interactive session
-  const child = spawn(cliCommand, args, {
-    cwd: projectPath,
-    stdio: 'inherit',
-    shell: true,
+  const startTime = Date.now();
+
+  // --- Execution phase ---
+  console.log();
+  console.log(chalk.bold('  Boatclaw started'));
+  console.log(chalk.dim(`  Agent: ${agent.name} | Model: ${agent.model}`));
+  console.log(chalk.dim(`  Projects: ${projectNames}`));
+  console.log();
+
+  // Create task processor (same as worker)
+  const processor = createTaskProcessor({
+    createPRs: createPRs && githubEnabled,
+    githubToken: config.github.token,
   });
 
-  child.on('error', (err) => {
-    if (err.message.includes('ENOENT')) {
-      ui.error(`${cliCommand} CLI not found. Please install it first.`);
-      if (provider === 'claude') {
-        ui.info('Install Claude Code: https://claude.ai/code');
+  // Check AI availability
+  if (!(await processor.isAvailable())) {
+    ui.error('AI provider is not available. Make sure the CLI is installed and authenticated.');
+    return;
+  }
+
+  // Process task across all projects
+  const result = await processor.processMultiProject(card, agent, agentProjects, {
+    onProjectComplete: async (projectResult) => {
+      const status = projectResult.success ? chalk.green('✅') : chalk.red('❌');
+      const duration = `${Math.round(projectResult.durationMs / 1000)}s`;
+      let line = `  ${status} ${chalk.bold(projectResult.projectName)} — ${duration}`;
+      if (projectResult.prUrl) {
+        line += ` — ${chalk.cyan(projectResult.prUrl)}`;
+      }
+      if (projectResult.error) {
+        line += chalk.red(` — ${projectResult.error}`);
+      }
+      console.log(line);
+    },
+  });
+
+  // --- Review phase ---
+  const prUrls: { project: string; prUrl: string; prNumber: number; repo: string }[] = [];
+  if (result.projectResults) {
+    for (const pr of result.projectResults) {
+      if (pr.prUrl && pr.prNumber) {
+        const proj = agentProjects.find(p => p.name === pr.projectName);
+        if (proj?.github) {
+          prUrls.push({ project: pr.projectName, prUrl: pr.prUrl, prNumber: pr.prNumber, repo: proj.github });
+        }
+      }
+    }
+  }
+
+  if (runReview && result.success) {
+    console.log();
+    console.log(chalk.bold('  Review started...'));
+
+    const aiProvider = createAIProvider({
+      provider: (config.ai.provider || 'claude') as 'claude' | 'cursor' | 'codex',
+      defaultModel: 'sonnet',
+      timeoutSeconds: config.ai.timeoutSeconds || 1800,
+    });
+
+    const terminalBoard = createTerminalBoardProvider();
+    const reviewResults: { name: string; approved: boolean }[] = [];
+
+    if (prUrls.length > 0 && config.github.token) {
+      // GitHub PR review
+      for (const pr of prUrls) {
+        try {
+          const githubClient = new GitHubClient({ token: config.github.token, defaultRepo: pr.repo });
+          const reviewer = createReviewerAgent({
+            boardProvider: terminalBoard,
+            aiProvider,
+            githubClient,
+            workflow: config.workflow,
+          });
+
+          const reviewResult = await reviewer.processCardForReview({
+            card,
+            prNumber: pr.prNumber,
+            repo: pr.repo,
+            projectContext: agentProjects.find(p => p.name === pr.project)?.context,
+            agentContext: agent.context,
+          });
+
+          reviewResults.push({ name: pr.project, approved: reviewResult.approved });
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          console.log(chalk.red(`  ⚠️ Review failed for ${pr.project}: ${msg}`));
+          reviewResults.push({ name: pr.project, approved: false });
+        }
       }
     } else {
-      ui.error(`Failed to start ${cliCommand}: ${err.message}`);
-    }
-  });
+      // Local review
+      for (const proj of agentProjects) {
+        try {
+          const reviewer = createReviewerAgent({
+            boardProvider: terminalBoard,
+            aiProvider,
+            workflow: config.workflow,
+          });
 
-  child.on('close', (code) => {
+          const reviewResult = await reviewer.processCardForLocalReview({
+            card,
+            projectPath: proj.path || process.cwd(),
+            baseBranch: proj.baseBranch || 'main',
+            projectContext: proj.context,
+            agentContext: agent.context,
+          });
+
+          reviewResults.push({ name: proj.name, approved: reviewResult.approved });
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          console.log(chalk.red(`  ⚠️ Review failed for ${proj.name}: ${msg}`));
+          reviewResults.push({ name: proj.name, approved: false });
+        }
+      }
+    }
+
+    // Show review summary
+    const allApproved = reviewResults.length === 0 || reviewResults.every(r => r.approved);
+    if (allApproved) {
+      console.log(chalk.green('  ✅ All reviews passed'));
+    } else {
+      for (const r of reviewResults) {
+        if (!r.approved) {
+          console.log(chalk.red(`  ❌ ${r.name} — review failed`));
+        }
+      }
+    }
+  }
+
+  // --- Final summary ---
+  const totalDuration = Math.round((Date.now() - startTime) / 1000);
+  console.log();
+  if (result.success) {
+    console.log(chalk.green.bold(`  ✅ Task completed (${totalDuration}s)`));
+  } else {
+    console.log(chalk.red.bold(`  ❌ Task failed (${totalDuration}s)`));
+    if (result.error) {
+      console.log(chalk.red(`  ${result.error}`));
+    }
+  }
+
+  if (prUrls.length > 0) {
     console.log();
-    if (code === 0) {
-      ui.success('Chat session ended');
+    console.log(chalk.bold('  Pull Requests:'));
+    for (const pr of prUrls) {
+      console.log(`  - ${pr.project}: ${chalk.cyan(pr.prUrl)}`);
     }
-  });
+  }
 
-  // Handle Ctrl+C gracefully
-  process.on('SIGINT', () => {
-    child.kill('SIGINT');
-  });
-
-  // Wait for the child process to finish
-  await new Promise<void>((resolve) => {
-    child.on('close', () => resolve());
-  });
+  console.log();
 }
 
 function listAgents(): void {
