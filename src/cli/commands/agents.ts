@@ -880,9 +880,7 @@ async function askAgent(name: string | undefined, options: { project?: string; p
   }
 
   // Handle Ctrl+C — stop spinner and exit cleanly
-  let interrupted = false;
   const handleInterrupt = () => {
-    interrupted = true;
     if (spinner) spinner.stop();
     console.log();
     console.log(chalk.yellow('  ⚠ Interrupted. Cleaning up...'));
