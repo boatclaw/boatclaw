@@ -14,6 +14,7 @@ import { spawn } from 'child_process';
 import { existsSync, writeFileSync, unlinkSync, mkdirSync } from 'fs';
 import { join, dirname } from 'path';
 import { tmpdir } from 'os';
+import { fileURLToPath } from 'url';
 import { IS_WINDOWS } from '../core/paths.js';
 import {
   AIProvider,
@@ -375,9 +376,8 @@ export class ClaudeProvider implements AIProvider {
    */
   private findMCPServerPath(): string {
     // Get the directory of the current module (claude.js in dist/)
-    // import.meta.url gives us file:///path/to/dist/claude.js
-    const currentFileUrl = import.meta.url;
-    const currentFilePath = new URL(currentFileUrl).pathname;
+    // fileURLToPath correctly handles Windows paths (strips leading slash)
+    const currentFilePath = fileURLToPath(import.meta.url);
     const distDir = dirname(currentFilePath);
 
     // mcp-server.js should be in the same dist directory

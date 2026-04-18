@@ -11,7 +11,7 @@
 
 import { Command } from 'commander';
 import chalk from 'chalk';
-import { readFileSync, watchFile, unwatchFile, statSync, openSync, readSync, closeSync } from 'fs';
+import { watchFile, unwatchFile, statSync, openSync, readSync, closeSync } from 'fs';
 import {
   getLogFiles,
   readLogFile,
@@ -293,16 +293,22 @@ function tailLogs(options: { level?: string }): void {
   };
 
   watchFile(logPath, { interval: 500 }, (curr) => {
+    if (curr.size < lastSize) {
+      // File was rotated/truncated — reset to read from beginning
+      lastSize = 0;
+    }
     if (curr.size > lastSize) {
+      let fd: number | undefined;
       try {
         // Read only new content
-        const fd = openSync(logPath, 'r');
+        fd = openSync(logPath, 'r');
         const buffer = Buffer.alloc(curr.size - lastSize);
         readSync(fd, buffer, 0, buffer.length, lastSize);
-        closeSync(fd);
         processNewLines(buffer.toString('utf-8'));
       } catch {
         // Ignore read errors
+      } finally {
+        if (fd !== undefined) closeSync(fd);
       }
       lastSize = curr.size;
     }
