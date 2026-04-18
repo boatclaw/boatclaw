@@ -8,6 +8,7 @@
 
 import { spawn } from 'child_process';
 import { existsSync } from 'fs';
+import { IS_WINDOWS } from '../core/paths.js';
 import {
   AIProvider,
   ExecutionOptions,
@@ -63,6 +64,7 @@ export class CodexProvider implements AIProvider {
     return new Promise((resolve) => {
       const proc = spawn('codex', ['--version'], {
         stdio: ['pipe', 'pipe', 'pipe'],
+        shell: IS_WINDOWS,
       });
 
       let output = '';
@@ -123,6 +125,7 @@ export class CodexProvider implements AIProvider {
       const proc = spawn('codex', args, {
         cwd: options.workingDir,
         stdio: ['pipe', 'pipe', 'pipe'],
+        shell: IS_WINDOWS,
         env: {
           ...process.env,
         },
@@ -143,10 +146,14 @@ export class CodexProvider implements AIProvider {
 
       const timeoutId = setTimeout(() => {
         resolved = true;
-        proc.kill('SIGTERM');
-        setTimeout(() => {
-          try { proc.kill('SIGKILL'); } catch { /* already dead */ }
-        }, 5000);
+        if (IS_WINDOWS) {
+          try { proc.kill(); } catch { /* already dead */ }
+        } else {
+          proc.kill('SIGTERM');
+          setTimeout(() => {
+            try { proc.kill('SIGKILL'); } catch { /* already dead */ }
+          }, 5000);
+        }
         resolve({
           success: false,
           output: stdout,

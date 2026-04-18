@@ -6,7 +6,7 @@
  */
 
 import { spawn } from 'child_process';
-import { resolve } from 'path';
+import { resolve, basename } from 'path';
 import { homedir } from 'os';
 import { existsSync, mkdirSync, rmSync, readdirSync, statSync } from 'fs';
 
@@ -42,7 +42,7 @@ export class WorktreeManager {
     this.mainRepoPath = resolve(options.mainRepoPath);
     this.worktreeBase =
       options.worktreeBase || resolve(homedir(), '.boatclaw', 'worktrees');
-    this.projectName = this.mainRepoPath.split('/').pop() || 'project';
+    this.projectName = basename(this.mainRepoPath) || 'project';
   }
 
   private async runGit(

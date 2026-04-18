@@ -7,6 +7,7 @@
  */
 
 import { spawn } from 'child_process';
+import { basename } from 'path';
 import { BoardProvider, Card } from '../platforms/types.js';
 import { AIProvider, Model } from '../ai/types.js';
 import { GitHubClient, ReviewComment, ChangedFile } from './client.js';
@@ -378,7 +379,7 @@ export class ReviewerAgent {
     const { card, projectPath, baseBranch, projectContext, agentContext, agentComment, ticketComments, projectName, githubRepo } = options;
 
     // Build project label for comments
-    const projectLabel = projectName || projectPath.split('/').pop() || 'project';
+    const projectLabel = projectName || basename(projectPath) || 'project';
     const repoLink = githubRepo ? ` ([${githubRepo}](https://github.com/${githubRepo}))` : '';
 
     await this.board.addComment(
