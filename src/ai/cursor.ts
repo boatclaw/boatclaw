@@ -27,10 +27,10 @@ import {
  * - xAI: grok-code
  */
 export const CURSOR_MODELS: Record<string, string> = {
-  haiku: 'claude-haiku-4-5',
-  sonnet: 'claude-sonnet-4-5',
-  opus: 'claude-opus-4-5',
-  auto: 'claude-sonnet-4-5',
+  haiku: 'claude-3-haiku',
+  sonnet: 'claude-sonnet-4',
+  opus: 'claude-opus-4',
+  auto: 'claude-sonnet-4',
 };
 
 /**
@@ -211,8 +211,7 @@ export class CursorProvider implements AIProvider {
       '--force',
       // Model selection
       '--model', modelName,
-      // Read prompt from stdin
-      '-',
+      // Prompt is sent via stdin (no positional argument needed)
     ];
 
     return args;

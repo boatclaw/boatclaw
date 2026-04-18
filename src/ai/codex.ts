@@ -209,8 +209,7 @@ export class CodexProvider implements AIProvider {
       '--full-auto',
       // Model selection
       '--model', modelName,
-      // Read prompt from stdin
-      '-',
+      // Prompt is sent via stdin (no positional argument needed)
     ];
 
     return args;
