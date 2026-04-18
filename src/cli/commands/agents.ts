@@ -879,6 +879,18 @@ async function askAgent(name: string | undefined, options: { project?: string; p
     return;
   }
 
+  // Handle Ctrl+C — stop spinner and exit cleanly
+  let interrupted = false;
+  const handleInterrupt = () => {
+    interrupted = true;
+    if (spinner) spinner.stop();
+    console.log();
+    console.log(chalk.yellow('  ⚠ Interrupted. Cleaning up...'));
+    // Force exit — child processes (non-detached) are killed by the OS
+    process.exit(130);
+  };
+  process.on('SIGINT', handleInterrupt);
+
   // Process task across all projects
   const spinner = ora({ text: `Working on ${projectNames}...`, prefixText: ' ', color: 'cyan' }).start();
 
@@ -901,6 +913,7 @@ async function askAgent(name: string | undefined, options: { project?: string; p
   });
 
   spinner.stop();
+  process.removeListener('SIGINT', handleInterrupt);
 
   // --- Review phase ---
   const prUrls: { project: string; prUrl: string; prNumber: number; repo: string }[] = [];
