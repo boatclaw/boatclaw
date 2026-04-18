@@ -10,6 +10,7 @@
 import { Command } from 'commander';
 import chalk from 'chalk';
 import { existsSync, writeFileSync, readFileSync, unlinkSync } from 'fs';
+import { sep } from 'path';
 import { configManager } from '../../core/config.js';
 import { isInitialized, BOATCLAW_DIR, LOCK_FILE } from '../../core/paths.js';
 import { createBoardProvider, verifyPlatformConfig, verifyWorkflowConfig } from '../../platforms/factory.js';
@@ -447,9 +448,14 @@ export function registerStatusCommands(program: Command): void {
           return;
         }
 
-        // Send SIGTERM to stop gracefully
+        // Send stop signal
         ui.info(`Stopping worker (PID ${pid})...`);
-        process.kill(pid, 'SIGTERM');
+        try {
+          process.kill(pid, 'SIGTERM');
+        } catch {
+          // On Windows, SIGTERM may not be supported — force kill
+          process.kill(pid);
+        }
 
         // Wait for it to stop (up to 10 seconds)
         let stopped = false;
@@ -469,7 +475,11 @@ export function registerStatusCommands(program: Command): void {
           ui.success('Worker stopped.');
         } else {
           ui.warning('Worker did not stop gracefully. Force killing...');
-          process.kill(pid, 'SIGKILL');
+          try {
+            process.kill(pid, 'SIGKILL');
+          } catch {
+            process.kill(pid);
+          }
           try { unlinkSync(LOCK_FILE); } catch { /* ignore */ }
           ui.success('Worker killed.');
         }
@@ -577,18 +587,18 @@ function timestamp(): string {
   return new Date().toLocaleTimeString('en-US', { hour12: false });
 }
 
-function truncatePath(path: string, maxLen: number): string {
-  if (path.length <= maxLen) return path;
-  // Show the last part of the path with ellipsis
-  const parts = path.split('/');
+function truncatePath(filePath: string, maxLen: number): string {
+  if (filePath.length <= maxLen) return filePath;
+  // Show the last part of the path with ellipsis (works on all OS)
+  const parts = filePath.split(sep);
   let result = '';
   for (let i = parts.length - 1; i >= 0; i--) {
-    const candidate = parts.slice(i).join('/');
+    const candidate = parts.slice(i).join(sep);
     if (candidate.length + 3 <= maxLen) {
-      result = '.../' + candidate;
+      result = '...' + sep + candidate;
     } else {
       break;
     }
   }
-  return result || path.slice(-maxLen + 3) + '...';
+  return result || filePath.slice(-maxLen + 3) + '...';
 }

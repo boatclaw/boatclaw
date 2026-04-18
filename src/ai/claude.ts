@@ -12,8 +12,10 @@
 
 import { spawn } from 'child_process';
 import { existsSync, writeFileSync, unlinkSync, mkdirSync } from 'fs';
-import { join } from 'path';
+import { join, dirname } from 'path';
 import { tmpdir } from 'os';
+import { fileURLToPath } from 'url';
+import { IS_WINDOWS } from '../core/paths.js';
 import {
   AIProvider,
   ExecutionOptions,
@@ -83,6 +85,7 @@ export class ClaudeProvider implements AIProvider {
     return new Promise((resolve) => {
       const proc = spawn('claude', ['--version'], {
         stdio: ['pipe', 'pipe', 'pipe'],
+        shell: IS_WINDOWS,
       });
 
       let output = '';
@@ -180,6 +183,7 @@ export class ClaudeProvider implements AIProvider {
       const proc = spawn('claude', args, {
         cwd: options.workingDir,
         stdio: ['pipe', 'pipe', 'pipe'],
+        shell: IS_WINDOWS,
         env: {
           ...process.env,
           // Only set non-interactive for non-MCP mode
@@ -203,11 +207,15 @@ export class ClaudeProvider implements AIProvider {
       // Set timeout
       const timeoutId = setTimeout(() => {
         resolved = true;
-        proc.kill('SIGTERM');
-        // SIGKILL after 5s grace period if process doesn't exit
-        setTimeout(() => {
-          try { proc.kill('SIGKILL'); } catch { /* already dead */ }
-        }, 5000);
+        // Windows: force kill immediately. Unix: graceful SIGTERM then SIGKILL after 5s.
+        if (IS_WINDOWS) {
+          try { proc.kill(); } catch { /* already dead */ }
+        } else {
+          proc.kill('SIGTERM');
+          setTimeout(() => {
+            try { proc.kill('SIGKILL'); } catch { /* already dead */ }
+          }, 5000);
+        }
         resolve({
           success: false,
           output: stdout,
@@ -368,10 +376,9 @@ export class ClaudeProvider implements AIProvider {
    */
   private findMCPServerPath(): string {
     // Get the directory of the current module (claude.js in dist/)
-    // import.meta.url gives us file:///path/to/dist/claude.js
-    const currentFileUrl = import.meta.url;
-    const currentFilePath = new URL(currentFileUrl).pathname;
-    const distDir = currentFilePath.substring(0, currentFilePath.lastIndexOf('/'));
+    // fileURLToPath correctly handles Windows paths (strips leading slash)
+    const currentFilePath = fileURLToPath(import.meta.url);
+    const distDir = dirname(currentFilePath);
 
     // mcp-server.js should be in the same dist directory
     const mcpServerPath = join(distDir, 'mcp-server.js');

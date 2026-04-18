@@ -42,3 +42,9 @@ export function getConfigDir(): string {
 export function isInitialized(): boolean {
   return existsSync(CONFIG_FILE);
 }
+
+/**
+ * Whether the current platform is Windows.
+ * Used for cross-platform spawn (shell: true) and signal handling.
+ */
+export const IS_WINDOWS = process.platform === 'win32';

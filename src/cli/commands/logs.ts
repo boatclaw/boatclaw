@@ -11,7 +11,7 @@
 
 import { Command } from 'commander';
 import chalk from 'chalk';
-import { spawn } from 'child_process';
+import { watchFile, unwatchFile, statSync, openSync, readSync, closeSync } from 'fs';
 import {
   getLogFiles,
   readLogFile,
@@ -256,13 +256,16 @@ function tailLogs(options: { level?: string }): void {
   console.log(chalk.dim('Press Ctrl+C to stop'));
   console.log();
 
-  // Use tail -f to follow the log file
-  const tail = spawn('tail', ['-f', logPath], {
-    stdio: ['ignore', 'pipe', 'inherit'],
-  });
+  // Cross-platform log following using fs.watchFile (works on Windows, macOS, Linux)
+  let lastSize = 0;
+  try {
+    lastSize = statSync(logPath).size;
+  } catch {
+    // File may not exist yet
+  }
 
-  tail.stdout.on('data', (data: Buffer) => {
-    const lines = data.toString().trim().split('\n');
+  const processNewLines = (data: string) => {
+    const lines = data.trim().split('\n');
 
     for (const line of lines) {
       if (!line.trim()) continue;
@@ -287,16 +290,33 @@ function tailLogs(options: { level?: string }): void {
         console.log(line);
       }
     }
-  });
+  };
 
-  tail.on('error', (error) => {
-    ui.error(`Failed to tail logs: ${error.message}`);
-    process.exit(1);
+  watchFile(logPath, { interval: 100 }, (curr) => {
+    if (curr.size < lastSize) {
+      // File was rotated/truncated — reset to read from beginning
+      lastSize = 0;
+    }
+    if (curr.size > lastSize) {
+      let fd: number | undefined;
+      try {
+        // Read only new content
+        fd = openSync(logPath, 'r');
+        const buffer = Buffer.alloc(curr.size - lastSize);
+        readSync(fd, buffer, 0, buffer.length, lastSize);
+        processNewLines(buffer.toString('utf-8'));
+      } catch {
+        // Ignore read errors
+      } finally {
+        if (fd !== undefined) closeSync(fd);
+      }
+      lastSize = curr.size;
+    }
   });
 
   // Handle cleanup on exit
   process.on('SIGINT', () => {
-    tail.kill();
+    unwatchFile(logPath);
     console.log();
     process.exit(0);
   });
