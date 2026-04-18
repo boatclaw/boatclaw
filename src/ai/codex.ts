@@ -1,8 +1,9 @@
 /**
  * OpenAI Codex CLI provider implementation.
  *
- * Executes tasks using the OpenAI Codex CLI (codex command).
- * https://github.com/openai/codex
+ * Executes tasks using the Codex CLI (`codex exec` command).
+ * Install: npm install -g @openai/codex
+ * Docs: https://developers.openai.com/codex/cli/reference
  */
 
 import { spawn } from 'child_process';
@@ -16,17 +17,21 @@ import {
 
 /**
  * Model mapping for Codex CLI.
+ * Codex uses its own default model — we don't pass --model.
  */
 export const CODEX_MODELS: Record<string, string> = {
-  // Map our model names to OpenAI models
-  haiku: 'gpt-4o-mini',      // Fast, simple tasks
-  sonnet: 'gpt-4o',          // Default, balanced
-  opus: 'o1',                // Complex reasoning
-  auto: 'gpt-4o',            // Default
+  haiku: 'haiku',
+  sonnet: 'sonnet',
+  opus: 'opus',
+  auto: 'default',
 };
 
 /**
  * Codex CLI provider.
+ *
+ * Uses `codex exec` for non-interactive headless execution.
+ * Runs with --full-auto to auto-approve file writes and commands.
+ * Does not pass --model — lets Codex use its default.
  */
 export class CodexProvider implements AIProvider {
   readonly name = 'codex';
@@ -36,7 +41,7 @@ export class CodexProvider implements AIProvider {
 
   constructor(options?: { defaultModel?: Model; timeoutSeconds?: number }) {
     this.defaultModel = options?.defaultModel || 'sonnet';
-    this.defaultTimeoutMs = (options?.timeoutSeconds || 1800) * 1000; // 30 min default
+    this.defaultTimeoutMs = (options?.timeoutSeconds || 1800) * 1000;
   }
 
   /**
@@ -94,11 +99,13 @@ export class CodexProvider implements AIProvider {
     const model = options.model || this.defaultModel;
     const timeoutMs = options.timeoutMs || this.defaultTimeoutMs;
 
-    // Resolve model name
-    const modelName = CODEX_MODELS[model] || CODEX_MODELS['sonnet'];
+    // Resolve model name (for logging only — not passed to CLI)
+    const modelName = model === 'auto'
+      ? CODEX_MODELS['sonnet']
+      : CODEX_MODELS[model] || model;
 
     // Build command arguments
-    const args = this.buildArgs(options, modelName);
+    const args = this.buildArgs();
 
     return new Promise((resolve) => {
       // Verify working directory exists
@@ -137,7 +144,6 @@ export class CodexProvider implements AIProvider {
       const timeoutId = setTimeout(() => {
         resolved = true;
         proc.kill('SIGTERM');
-        // SIGKILL after 5s grace period if process doesn't exit
         setTimeout(() => {
           try { proc.kill('SIGKILL'); } catch { /* already dead */ }
         }, 5000);
@@ -175,13 +181,13 @@ export class CodexProvider implements AIProvider {
         resolve({
           success: false,
           output: stdout,
-          error: `Failed to spawn codex: ${error.message}`,
+          error: `Failed to spawn codex: ${error.message}. Install: npm install -g @openai/codex`,
           model: modelName,
           durationMs: Date.now() - startTime,
         });
       });
 
-      // Send prompt to stdin
+      // Send prompt via stdin
       proc.stdin?.write(options.prompt);
       proc.stdin?.end();
     });
@@ -190,17 +196,14 @@ export class CodexProvider implements AIProvider {
   /**
    * Build Codex CLI arguments.
    */
-  private buildArgs(options: ExecutionOptions, modelName: string): string[] {
-    const args: string[] = [
-      // Quiet/non-interactive mode
-      '--quiet',
-      // Full auto-approval mode
-      '--approval-mode', 'full-auto',
-      // Model selection
-      '--model', modelName,
+  private buildArgs(): string[] {
+    return [
+      // Use exec subcommand for non-interactive mode
+      'exec',
+      // Full auto — auto-approve file writes and commands
+      '--full-auto',
+      // No --model flag — let Codex use its default
     ];
-
-    return args;
   }
 }
 

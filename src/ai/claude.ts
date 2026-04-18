@@ -125,10 +125,10 @@ export class ClaudeProvider implements AIProvider {
     const model = options.model || this.defaultModel;
     const timeoutMs = options.timeoutMs || this.defaultTimeoutMs;
 
-    // Resolve model name
+    // Resolve model name — pass through directly if not in the map
     const modelName = model === 'auto'
       ? CLAUDE_MODELS['sonnet']
-      : CLAUDE_MODELS[model] || CLAUDE_MODELS['sonnet'];
+      : CLAUDE_MODELS[model] || model;
 
     // Build command arguments
     let mcpConfigPath: string | undefined;

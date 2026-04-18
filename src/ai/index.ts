@@ -168,7 +168,7 @@ export function getAvailableModels(provider: string): Model[] {
     case 'claude':
       return ['auto', 'haiku', 'sonnet', 'opus'];
     case 'cursor':
-      return ['auto', 'sonnet', 'opus'];
+      return ['auto', 'haiku', 'sonnet', 'opus'];
     case 'codex':
       return ['auto', 'haiku', 'sonnet', 'opus'];
     default:

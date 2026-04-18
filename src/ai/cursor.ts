@@ -1,8 +1,9 @@
 /**
  * Cursor CLI provider implementation.
  *
- * Executes tasks using the Cursor CLI (cursor command).
- * https://docs.cursor.com/cli
+ * Executes tasks using the Cursor Agent CLI (`agent` command).
+ * Install: curl https://cursor.com/install -fsS | bash
+ * Docs: https://cursor.com/docs/cli/overview
  */
 
 import { spawn } from 'child_process';
@@ -16,17 +17,21 @@ import {
 
 /**
  * Model mapping for Cursor CLI.
+ * Cursor uses its own default model — we don't pass --model.
  */
 export const CURSOR_MODELS: Record<string, string> = {
-  sonnet: 'claude-3-5-sonnet',
-  opus: 'claude-3-opus',
-  // Cursor also supports GPT models
-  gpt4: 'gpt-4',
-  gpt4turbo: 'gpt-4-turbo',
+  haiku: 'haiku',
+  sonnet: 'sonnet',
+  opus: 'opus',
+  auto: 'default',
 };
 
 /**
  * Cursor CLI provider.
+ *
+ * Uses the `agent` CLI command (installed via cursor.com/install).
+ * Runs in headless mode with --print --force for non-interactive execution.
+ * Does not pass --model — lets Cursor use its default.
  */
 export class CursorProvider implements AIProvider {
   readonly name = 'cursor';
@@ -36,11 +41,11 @@ export class CursorProvider implements AIProvider {
 
   constructor(options?: { defaultModel?: Model; timeoutSeconds?: number }) {
     this.defaultModel = options?.defaultModel || 'sonnet';
-    this.defaultTimeoutMs = (options?.timeoutSeconds || 1800) * 1000; // 30 min default
+    this.defaultTimeoutMs = (options?.timeoutSeconds || 1800) * 1000;
   }
 
   /**
-   * Check if Cursor CLI is available.
+   * Check if Cursor Agent CLI is available.
    */
   async isAvailable(): Promise<boolean> {
     try {
@@ -52,11 +57,11 @@ export class CursorProvider implements AIProvider {
   }
 
   /**
-   * Get Cursor CLI version.
+   * Get Cursor Agent CLI version.
    */
   async getVersion(): Promise<string | null> {
     return new Promise((resolve) => {
-      const proc = spawn('cursor', ['--version'], {
+      const proc = spawn('agent', ['--version'], {
         stdio: ['pipe', 'pipe', 'pipe'],
       });
 
@@ -87,20 +92,20 @@ export class CursorProvider implements AIProvider {
   }
 
   /**
-   * Execute a task with Cursor CLI.
+   * Execute a task with Cursor Agent CLI.
    */
   async execute(options: ExecutionOptions): Promise<ExecutionResult> {
     const startTime = Date.now();
     const model = options.model || this.defaultModel;
     const timeoutMs = options.timeoutMs || this.defaultTimeoutMs;
 
-    // Resolve model name
+    // Resolve model name (for logging only — not passed to CLI)
     const modelName = model === 'auto'
       ? CURSOR_MODELS['sonnet']
-      : CURSOR_MODELS[model] || CURSOR_MODELS['sonnet'];
+      : CURSOR_MODELS[model] || model;
 
     // Build command arguments
-    const args = this.buildArgs(options, modelName);
+    const args = this.buildArgs();
 
     return new Promise((resolve) => {
       // Verify working directory exists
@@ -115,13 +120,11 @@ export class CursorProvider implements AIProvider {
         return;
       }
 
-      const proc = spawn('cursor', args, {
+      const proc = spawn('agent', args, {
         cwd: options.workingDir,
         stdio: ['pipe', 'pipe', 'pipe'],
         env: {
           ...process.env,
-          // Ensure non-interactive mode
-          CURSOR_NO_INTERACTIVE: '1',
         },
       });
 
@@ -141,7 +144,6 @@ export class CursorProvider implements AIProvider {
       const timeoutId = setTimeout(() => {
         resolved = true;
         proc.kill('SIGTERM');
-        // SIGKILL after 5s grace period if process doesn't exit
         setTimeout(() => {
           try { proc.kill('SIGKILL'); } catch { /* already dead */ }
         }, 5000);
@@ -179,35 +181,29 @@ export class CursorProvider implements AIProvider {
         resolve({
           success: false,
           output: stdout,
-          error: `Failed to spawn cursor: ${error.message}`,
+          error: `Failed to spawn agent: ${error.message}. Install Cursor CLI: curl https://cursor.com/install -fsS | bash`,
           model: modelName,
           durationMs: Date.now() - startTime,
         });
       });
 
-      // Send prompt to stdin
+      // Send prompt via stdin
       proc.stdin?.write(options.prompt);
       proc.stdin?.end();
     });
   }
 
   /**
-   * Build Cursor CLI arguments.
+   * Build Cursor Agent CLI arguments.
    */
-  private buildArgs(options: ExecutionOptions, modelName: string): string[] {
-    const args: string[] = [
-      // Run in agent mode
-      'agent',
-      // Model selection
-      '--model', modelName,
+  private buildArgs(): string[] {
+    return [
+      // Non-interactive headless mode
+      '--print',
+      // Auto-approve file writes and commands
+      '--force',
+      // No --model flag — let Cursor use its default
     ];
-
-    // Add max tokens if specified
-    if (options.maxTokens) {
-      args.push('--max-tokens', String(options.maxTokens));
-    }
-
-    return args;
   }
 }
 
