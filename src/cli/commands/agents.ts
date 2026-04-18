@@ -717,11 +717,10 @@ async function askAgent(name: string, projectName?: string): Promise<void> {
     args.push('--system-prompt', fullContext);
   }
 
-  // Spawn interactive session
+  // Spawn interactive session (no shell: true — avoids escaping issues with parentheses in context)
   const child = spawn(cliCommand, args, {
     cwd: projectPath,
     stdio: 'inherit',
-    shell: true,
   });
 
   child.on('error', (err) => {
