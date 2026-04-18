@@ -17,12 +17,12 @@ import { existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync } from 
 import { join } from 'path';
 import type { BoardProvider, Card, Board, BoardList, Label, Comment, CardOperationResult, FetchCardsOptions } from '../platforms/types.js';
 
-let commentCounter = 0;
-
 /**
  * Create a file-based board provider for terminal interactive mode.
  */
 export function createFileBoardProvider(askDir: string): BoardProvider {
+  let commentCounter = 0;
+
   // Ensure directory exists
   if (!existsSync(askDir)) {
     mkdirSync(askDir, { recursive: true });

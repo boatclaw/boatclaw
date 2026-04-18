@@ -1028,7 +1028,7 @@ function startAskWatcher(askDir: string): () => void {
             const text: string = data.text;
 
             // Check if this is a question (from ask_human tool)
-            if (text.includes('Question from AI:') || text.includes('question')) {
+            if (text.includes('Question from AI:')) {
               // Extract the question text
               const questionText = text
                 .replace(/🤖\s*Question from AI:\s*/g, '')
