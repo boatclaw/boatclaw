@@ -58,6 +58,8 @@ export interface TaskProcessorOptions {
   githubToken?: string;
   /** Enable interactive mode (ask_human) - only works with Claude */
   interactive?: boolean;
+  /** Override MCP config (e.g., for terminal interactive mode) */
+  mcpConfig?: { cardId: string; boardProvider: 'trello' | 'jira' | 'linear' | 'terminal'; askDir?: string };
   /** Called after each project completes in multi-project tasks */
   onProjectComplete?: (result: ProjectProcessingResult) => Promise<void> | void;
 }
@@ -81,9 +83,11 @@ export class TaskProcessor {
   private githubToken?: string;
   private dryRun: boolean;
   private interactive: boolean;
+  private mcpConfigOverride?: { cardId: string; boardProvider: 'trello' | 'jira' | 'linear' | 'terminal'; askDir?: string };
 
   constructor(options?: TaskProcessorOptions) {
     this.interactive = options?.interactive ?? false;
+    this.mcpConfigOverride = options?.mcpConfig;
 
     // Create base provider from config if not provided
     if (options?.provider) {
@@ -117,19 +121,22 @@ export class TaskProcessor {
 
     if (this.interactive && this.baseProvider.name === 'claude') {
       const config = configManager.load();
+
+      // Use MCP config override (e.g., terminal mode) or default to board platform
+      const mcpConfig = this.mcpConfigOverride
+        ? { ...this.mcpConfigOverride, cardId }
+        : { cardId, boardProvider: config.platform as 'trello' | 'jira' | 'linear' };
+
       log.info('Creating interactive Claude provider with MCP', {
         cardId,
-        platform: config.platform,
+        provider: mcpConfig.boardProvider,
       });
       return createAIProvider({
         provider: 'claude',
         defaultModel: config.ai.defaultModel as Model,
         timeoutSeconds: config.ai.timeoutSeconds,
         interactive: true,
-        mcpConfig: {
-          cardId,
-          boardProvider: config.platform as 'trello' | 'jira' | 'linear',
-        },
+        mcpConfig,
       });
     }
 

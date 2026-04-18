@@ -27,8 +27,9 @@ import {
  */
 export interface MCPServerConfig {
   cardId: string;
-  boardProvider: 'trello' | 'jira' | 'linear';
-  // Board credentials will be read from config
+  boardProvider: 'trello' | 'jira' | 'linear' | 'terminal';
+  /** Directory for file-based ask/answer exchange (terminal mode only) */
+  askDir?: string;
 }
 
 /**
@@ -340,15 +341,20 @@ export class ClaudeProvider implements AIProvider {
     const mcpServerPath = this.findMCPServerPath();
 
     // MCP config format for Claude CLI
+    const mcpArgs = [
+      mcpServerPath,
+      '--card-id', config.cardId,
+      '--provider', config.boardProvider,
+    ];
+    if (config.askDir) {
+      mcpArgs.push('--ask-dir', config.askDir);
+    }
+
     const mcpConfig = {
       mcpServers: {
         'boatclaw-ask-human': {
           command: 'node',
-          args: [
-            mcpServerPath,
-            '--card-id', config.cardId,
-            '--provider', config.boardProvider,
-          ],
+          args: mcpArgs,
         },
       },
     };
