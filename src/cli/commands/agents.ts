@@ -15,16 +15,14 @@ import { Command } from 'commander';
 import chalk from 'chalk';
 import inquirer from 'inquirer';
 import * as readline from 'readline';
-import { spawn } from 'child_process';
 import { configManager, type RoleConfig, type ProjectConfig } from '../../core/config.js';
 import { isInitialized } from '../../core/paths.js';
 import * as ui from '../ui.js';
-import { createTaskProcessor, type TaskProcessorOptions } from '../../ai/task-processor.js';
+import { createTaskProcessor } from '../../ai/task-processor.js';
 import { createAIProvider } from '../../ai/index.js';
 import { createReviewerAgent } from '../../github/reviewer.js';
 import { GitHubClient } from '../../github/client.js';
 import type { Card, BoardProvider, CardOperationResult, Comment } from '../../platforms/types.js';
-import type { Model } from '../../ai/types.js';
 
 export function registerAgentsCommands(program: Command): void {
   const agents = program
