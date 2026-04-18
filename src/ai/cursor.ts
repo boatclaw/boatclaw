@@ -198,15 +198,14 @@ export class CursorProvider implements AIProvider {
   /**
    * Build Cursor Agent CLI arguments.
    */
-  private buildArgs(_options: ExecutionOptions, modelName: string): string[] {
+  private buildArgs(_options: ExecutionOptions, _modelName: string): string[] {
     const args: string[] = [
       // Non-interactive headless mode
       '--print',
       // Auto-approve file writes and commands
       '--force',
-      // Model selection
-      '--model', modelName,
-      // Prompt is sent via stdin (no positional argument needed)
+      // No --model flag — let Cursor use its default model
+      // Prompt is sent via stdin
     ];
 
     return args;

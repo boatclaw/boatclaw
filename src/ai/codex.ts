@@ -197,15 +197,14 @@ export class CodexProvider implements AIProvider {
   /**
    * Build Codex CLI arguments.
    */
-  private buildArgs(_options: ExecutionOptions, modelName: string): string[] {
+  private buildArgs(_options: ExecutionOptions, _modelName: string): string[] {
     const args: string[] = [
       // Use exec subcommand for non-interactive mode
       'exec',
       // Full auto — auto-approve file writes and commands
       '--full-auto',
-      // Model selection
-      '--model', modelName,
-      // Prompt is sent via stdin (no positional argument needed)
+      // No --model flag — let Codex use its default model
+      // Prompt is sent via stdin
     ];
 
     return args;
