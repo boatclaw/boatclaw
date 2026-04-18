@@ -104,9 +104,10 @@ export class CodexProvider implements AIProvider {
     const model = options.model || this.defaultModel;
     const timeoutMs = options.timeoutMs || this.defaultTimeoutMs;
 
-    // Resolve model name — pass through directly if not in the map
-    // This lets users specify exact model names like 'gpt-5.2' or 'o1'
-    const modelName = CODEX_MODELS[model] || model;
+    // Resolve model name
+    const modelName = model === 'auto'
+      ? CODEX_MODELS['sonnet']
+      : CODEX_MODELS[model] || model;
 
     // Build command arguments
     const args = this.buildArgs(options, modelName);
@@ -191,7 +192,8 @@ export class CodexProvider implements AIProvider {
         });
       });
 
-      // Prompt is passed as trailing argument, not stdin
+      // Send prompt via stdin to avoid ARG_MAX limits on long prompts
+      proc.stdin?.write(options.prompt);
       proc.stdin?.end();
     });
   }
@@ -199,7 +201,7 @@ export class CodexProvider implements AIProvider {
   /**
    * Build Codex CLI arguments.
    */
-  private buildArgs(options: ExecutionOptions, modelName: string): string[] {
+  private buildArgs(_options: ExecutionOptions, modelName: string): string[] {
     const args: string[] = [
       // Use exec subcommand for non-interactive mode
       'exec',
@@ -207,8 +209,8 @@ export class CodexProvider implements AIProvider {
       '--full-auto',
       // Model selection
       '--model', modelName,
-      // Prompt as trailing argument
-      options.prompt,
+      // Read prompt from stdin
+      '-',
     ];
 
     return args;

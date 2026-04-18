@@ -105,8 +105,7 @@ export class CursorProvider implements AIProvider {
     const model = options.model || this.defaultModel;
     const timeoutMs = options.timeoutMs || this.defaultTimeoutMs;
 
-    // Resolve model name — pass through directly if not in the map
-    // This lets users specify exact model names like 'gpt-5.4' or 'gemini-3-pro'
+    // Resolve model name — falls back to raw model string if not in the map
     const modelName = model === 'auto'
       ? CURSOR_MODELS['sonnet']
       : CURSOR_MODELS[model] || model;
@@ -195,7 +194,8 @@ export class CursorProvider implements AIProvider {
         });
       });
 
-      // Prompt is passed as trailing argument, not stdin
+      // Send prompt via stdin to avoid ARG_MAX limits on long prompts
+      proc.stdin?.write(options.prompt);
       proc.stdin?.end();
     });
   }
@@ -203,7 +203,7 @@ export class CursorProvider implements AIProvider {
   /**
    * Build Cursor Agent CLI arguments.
    */
-  private buildArgs(options: ExecutionOptions, modelName: string): string[] {
+  private buildArgs(_options: ExecutionOptions, modelName: string): string[] {
     const args: string[] = [
       // Non-interactive headless mode
       '--print',
@@ -211,8 +211,8 @@ export class CursorProvider implements AIProvider {
       '--force',
       // Model selection
       '--model', modelName,
-      // Prompt as trailing argument
-      options.prompt,
+      // Read prompt from stdin
+      '-',
     ];
 
     return args;

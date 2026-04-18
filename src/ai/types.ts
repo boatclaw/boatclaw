@@ -1,7 +1,7 @@
 /**
  * AI provider types and interfaces.
  *
- * All AI integrations (Claude CLI, Cursor CLI) implement AIProvider.
+ * All AI integrations (Claude, Cursor, Codex) implement AIProvider.
  */
 
 /**
