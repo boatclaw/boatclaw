@@ -971,7 +971,8 @@ async function setupInitialProject(): Promise<void> {
 
   // Auto-detect GitHub
   let github: string | undefined;
-  if (isGitRepo(resolvedPath)) {
+  const isRepo = isGitRepo(resolvedPath);
+  if (isRepo) {
     const detected = detectGitHubRepo(resolvedPath);
     if (detected) {
       ui.success(`Detected GitHub: ${detected}`);
@@ -984,7 +985,11 @@ async function setupInitialProject(): Promise<void> {
       if (useDetected) {
         github = detected;
       }
+    } else {
+      ui.dim(`  Git repo detected at ${resolvedPath} but no GitHub remote found.`);
     }
+  } else {
+    ui.dim(`  No .git found at ${resolvedPath}`);
   }
 
   // If GitHub not detected, offer manual entry
