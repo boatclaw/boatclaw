@@ -5,7 +5,12 @@
  * Connect your project boards to AI coding assistants.
  */
 
+import { EventEmitter } from 'events';
 import { Command } from 'commander';
+
+// Increase max listeners to prevent warnings during polling
+// (each HTTP request adds TLS socket listeners)
+EventEmitter.defaultMaxListeners = 20;
 import { registerSetupCommand } from './cli/commands/setup.js';
 import { registerStatusCommands } from './cli/commands/status.js';
 import { registerConfigCommands } from './cli/commands/config.js';
