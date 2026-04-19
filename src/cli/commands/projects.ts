@@ -189,7 +189,8 @@ async function addProject(options: {
 
   // Auto-detect GitHub from git remote
   let github = options.github;
-  if (!github && isGitRepo(resolvedPath)) {
+  const isRepo = isGitRepo(resolvedPath);
+  if (!github && isRepo) {
     const detected = detectGitHubRepo(resolvedPath);
     if (detected) {
       ui.success(`Detected GitHub: ${detected}`);
@@ -202,7 +203,11 @@ async function addProject(options: {
       if (useDetected) {
         github = detected;
       }
+    } else {
+      ui.dim(`  Git repo detected at ${resolvedPath} but no GitHub remote found.`);
     }
+  } else if (!github && !isRepo) {
+    ui.dim(`  No .git found at ${resolvedPath}`);
   }
 
   // If not detected, ask if they want to add manually
