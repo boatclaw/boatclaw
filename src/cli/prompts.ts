@@ -244,6 +244,7 @@ export async function inputMultilineText(options: {
 
 /**
  * Detect GitHub remote from a git repository.
+ * Returns "owner/repo" if GitHub, null otherwise.
  */
 export function detectGitHubRepo(repoPath: string): string | null {
   // Try to find the remote URL from multiple sources
@@ -308,6 +309,26 @@ export function detectGitHubRepo(repoPath: string): string | null {
     return `${match[1]}/${match[2]}`;
   }
 
+  return null;
+}
+
+/**
+ * Get the raw remote origin URL from a git repository.
+ * Returns the URL string (GitHub, Bitbucket, GitLab, etc.) or null.
+ */
+export function getRemoteOriginUrl(repoPath: string): string | null {
+  try {
+    const gitConfigPath = join(repoPath, '.git', 'config');
+    if (existsSync(gitConfigPath)) {
+      const config = readFileSync(gitConfigPath, 'utf-8');
+      const originMatch = config.match(/\[remote\s+["']origin["']\][^[]*?url\s*=\s*(.+)/m);
+      if (originMatch) {
+        return originMatch[1].trim().replace(/\r$/, '');
+      }
+    }
+  } catch {
+    // Ignore
+  }
   return null;
 }
 

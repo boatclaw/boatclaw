@@ -19,9 +19,9 @@ import { TrelloProvider } from '../../platforms/trello.js';
 import { JiraProvider } from '../../platforms/jira.js';
 import { LinearProvider } from '../../platforms/linear.js';
 import * as ui from '../ui.js';
-import { selectPath, detectGitHubRepo, isGitRepo, getDefaultBranch, inputMultilineText } from '../prompts.js';
-import { existsSync, writeFileSync, readFileSync } from 'fs';
-import { resolve, basename, join } from 'path';
+import { selectPath, detectGitHubRepo, isGitRepo, getDefaultBranch, getRemoteOriginUrl, inputMultilineText } from '../prompts.js';
+import { existsSync, writeFileSync } from 'fs';
+import { resolve, basename } from 'path';
 
 export function registerSetupCommand(program: Command): void {
   program
@@ -986,22 +986,12 @@ async function setupInitialProject(): Promise<void> {
         github = detected;
       }
     } else {
-      ui.dim(`  Git repo detected at ${resolvedPath} but no GitHub remote found.`);
-      // Debug: show what we found in .git/config
-      try {
-        const configPath = join(resolvedPath, '.git', 'config');
-        if (existsSync(configPath)) {
-          const config = readFileSync(configPath, 'utf-8');
-          const hasRemote = config.includes('[remote');
-          const urlLine = config.match(/url\s*=\s*(.+)/m);
-          ui.dim(`  .git/config exists, has remote: ${hasRemote}, url: ${urlLine ? urlLine[1].trim() : 'none'}`);
-        } else {
-          ui.dim(`  .git/config not found at ${configPath}`);
-        }
-      } catch { /* ignore */ }
+      // Not GitHub — show what we found
+      const remoteUrl = getRemoteOriginUrl(resolvedPath);
+      if (remoteUrl) {
+        ui.warning(`Remote is ${remoteUrl} — PR creation requires GitHub.`);
+      }
     }
-  } else {
-    ui.dim(`  No .git found at ${resolvedPath}`);
   }
 
   // If GitHub not detected, offer manual entry
