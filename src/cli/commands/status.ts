@@ -579,7 +579,13 @@ function setupWorkerEvents(worker: Worker, dryRun: boolean): void {
   });
 
   worker.on('error', (error: Error) => {
-    console.log(chalk.red(`[${timestamp()}]`) + chalk.red(` Worker error: ${error.message}`));
+    const msg = error.message;
+    // Network timeouts and connection errors are transient — show as warning, not error
+    if (msg.includes('timeout') || msg.includes('ECONNREFUSED') || msg.includes('ENOTFOUND') || msg.includes('ETIMEDOUT') || msg.includes('Failed to get cards')) {
+      console.log(chalk.yellow(`[${timestamp()}]`) + chalk.dim(` Connection issue — retrying... (${msg.slice(0, 80)})`));
+    } else {
+      console.log(chalk.red(`[${timestamp()}]`) + chalk.red(` Error: ${msg}`));
+    }
   });
 }
 
