@@ -12,8 +12,8 @@ import { Command } from 'commander';
 // because axios adds error listeners to shared TLS sockets per request.
 // These listeners are cleaned up after each request — not a memory leak.
 // Set global default to 0 (unlimited) for ALL emitters including TLS sockets.
+// Tradeoff: disables listener-leak detection globally, acceptable for a CLI tool.
 EventEmitter.defaultMaxListeners = 0;
-process.setMaxListeners(0);
 import { registerSetupCommand } from './cli/commands/setup.js';
 import { registerStatusCommands } from './cli/commands/status.js';
 import { registerConfigCommands } from './cli/commands/config.js';
