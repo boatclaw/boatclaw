@@ -986,17 +986,19 @@ async function setupInitialProject(): Promise<void> {
         github = detected;
       }
     } else {
-      ui.dim(`  Git repo detected at ${resolvedPath} but no GitHub remote found.`);
-      // Debug: show what we found in .git/config
+      // Show why GitHub wasn't detected
       try {
         const configPath = join(resolvedPath, '.git', 'config');
         if (existsSync(configPath)) {
           const config = readFileSync(configPath, 'utf-8');
-          const hasRemote = config.includes('[remote');
-          const urlLine = config.match(/url\s*=\s*(.+)/m);
-          ui.dim(`  .git/config exists, has remote: ${hasRemote}, url: ${urlLine ? urlLine[1].trim() : 'none'}`);
-        } else {
-          ui.dim(`  .git/config not found at ${configPath}`);
+          const urlMatch = config.match(/\[remote\s+["']origin["']\][^[]*?url\s*=\s*(.+)/m);
+          const url = urlMatch ? urlMatch[1].trim().replace(/\r$/, '') : null;
+          if (url && !url.includes('github.com')) {
+            ui.dim(`  Remote detected: ${url}`);
+            ui.dim(`  This is not a GitHub repo. PR creation requires GitHub.`);
+          } else if (!url) {
+            ui.dim(`  No remote origin found in git config.`);
+          }
         }
       } catch { /* ignore */ }
     }

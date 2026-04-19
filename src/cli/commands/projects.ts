@@ -204,17 +204,21 @@ async function addProject(options: {
         github = detected;
       }
     } else {
-      const gitConfigPath = join(resolvedPath, '.git', 'config');
-      const configExists = existsSync(gitConfigPath);
-      ui.dim(`  Git repo detected at ${resolvedPath} but no GitHub remote found.`);
-      ui.dim(`  .git/config exists: ${configExists}`);
-      if (configExists) {
-        try {
+      // Show why GitHub wasn't detected
+      try {
+        const gitConfigPath = join(resolvedPath, '.git', 'config');
+        if (existsSync(gitConfigPath)) {
           const config = readFileSync(gitConfigPath, 'utf-8');
-          const hasRemote = config.includes('[remote');
-          ui.dim(`  Has remote section: ${hasRemote}`);
-        } catch { /* ignore */ }
-      }
+          const urlMatch = config.match(/\[remote\s+["']origin["']\][^[]*?url\s*=\s*(.+)/m);
+          const url = urlMatch ? urlMatch[1].trim().replace(/\r$/, '') : null;
+          if (url && !url.includes('github.com')) {
+            ui.dim(`  Remote detected: ${url}`);
+            ui.dim(`  This is not a GitHub repo. PR creation requires GitHub.`);
+          } else if (!url) {
+            ui.dim(`  No remote origin found in git config.`);
+          }
+        }
+      } catch { /* ignore */ }
     }
   } else if (!github && !isRepo) {
     ui.dim(`  No .git found at ${resolvedPath}`);
