@@ -152,17 +152,16 @@ export class ReviewerAgent {
       return;
     }
 
-    if (reviewResult.approved) {
-      // Approving your own PR is allowed by GitHub — no try/catch needed
-      await this.github.approvePR({
-        prNumber,
-        body: `✅ **Approved**\n\n${reviewResult.summary}`,
-        repo,
-      });
-    } else {
-      // GitHub doesn't allow requesting changes on your own PR.
-      // Catch and fall back to posting a regular comment instead.
-      try {
+    // GitHub doesn't allow approving or requesting changes on your own PR.
+    // When the same token creates the PR and reviews it, fall back to a regular comment.
+    try {
+      if (reviewResult.approved) {
+        await this.github.approvePR({
+          prNumber,
+          body: `✅ **Approved**\n\n${reviewResult.summary}`,
+          repo,
+        });
+      } else {
         const bodyParts = [
           `❌ **Changes Requested**\n\n${reviewResult.summary}`,
           '',
@@ -177,14 +176,17 @@ export class ReviewerAgent {
           comments: reviewResult.lineComments,
           repo,
         });
-      } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : String(error);
-        if (errorMessage.includes('own pull request')) {
-          const body = `❌ **Review found issues**\n\n${reviewResult.summary}\n\n**Issues:**\n${reviewResult.issues.map(i => `- ${i}`).join('\n')}`;
-          await this.github.addPRComment({ prNumber, body, repo });
-        } else {
-          throw error;
-        }
+      }
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      if (errorMessage.includes('own pull request')) {
+        // Fall back to posting a regular comment
+        const body = reviewResult.approved
+          ? `✅ **Review passed**\n\n${reviewResult.summary}`
+          : `❌ **Review found issues**\n\n${reviewResult.summary}\n\n**Issues:**\n${reviewResult.issues.map(i => `- ${i}`).join('\n')}`;
+        await this.github.addPRComment({ prNumber, body, repo });
+      } else {
+        throw error;
       }
     }
   }
