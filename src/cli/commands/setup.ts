@@ -987,6 +987,31 @@ async function setupInitialProject(): Promise<void> {
     }
   }
 
+  // If GitHub not detected, offer manual entry
+  if (!github) {
+    const { wantGitHub } = await inquirer.prompt([{
+      type: 'confirm',
+      name: 'wantGitHub',
+      message: 'Add GitHub repo for PR creation? (optional)',
+      default: false,
+    }]);
+
+    if (wantGitHub) {
+      const { repo } = await inquirer.prompt([{
+        type: 'input',
+        name: 'repo',
+        message: 'GitHub repository (owner/repo):',
+        validate: (value: string) => {
+          if (!value.includes('/')) {
+            return 'Format: owner/repo (e.g., myorg/myproject)';
+          }
+          return true;
+        },
+      }]);
+      github = repo;
+    }
+  }
+
   // Auto-detect base branch
   let baseBranch = 'main';
   if (isGitRepo(resolvedPath)) {
