@@ -6,9 +6,50 @@ import inquirer from 'inquirer';
 import chalk from 'chalk';
 import * as readline from 'readline';
 import { readdirSync, statSync, existsSync } from 'fs';
-import { resolve, dirname, parse } from 'path';
+import { resolve, dirname, parse, join } from 'path';
 import { execSync } from 'child_process';
 import { homedir } from 'os';
+
+/**
+ * Find the git executable path.
+ * On Windows, git may not be in PATH even if installed.
+ * Checks common install locations as fallback.
+ */
+let gitPath: string | null = null;
+let gitChecked = false;
+
+function findGit(): string {
+  if (gitChecked && gitPath) return gitPath;
+  gitChecked = true;
+
+  // First try: just 'git' (works if it's in PATH)
+  try {
+    execSync('git --version', { stdio: ['pipe', 'pipe', 'pipe'] });
+    gitPath = 'git';
+    return gitPath;
+  } catch {
+    // Not in PATH
+  }
+
+  // Windows fallback: check common install locations
+  if (process.platform === 'win32') {
+    const commonPaths = [
+      join(process.env['ProgramFiles'] || 'C:\\Program Files', 'Git', 'cmd', 'git.exe'),
+      join(process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)', 'Git', 'cmd', 'git.exe'),
+      join(process.env['LOCALAPPDATA'] || '', 'Programs', 'Git', 'cmd', 'git.exe'),
+    ];
+    for (const p of commonPaths) {
+      if (existsSync(p)) {
+        gitPath = `"${p}"`;
+        return gitPath;
+      }
+    }
+  }
+
+  // Not found anywhere
+  gitPath = 'git'; // Will fail but let the caller handle it
+  return gitPath;
+}
 
 /**
  * Path selection with easy navigation.
@@ -206,7 +247,8 @@ export async function inputMultilineText(options: {
  */
 export function detectGitHubRepo(repoPath: string): string | null {
   try {
-    const remoteUrl = execSync('git remote get-url origin', {
+    const git = findGit();
+    const remoteUrl = execSync(`${git} remote get-url origin`, {
       cwd: repoPath,
       encoding: 'utf-8',
       stdio: ['pipe', 'pipe', 'pipe'],
@@ -234,7 +276,8 @@ export function detectGitHubRepo(repoPath: string): string | null {
  */
 export function isGitRepo(path: string): boolean {
   try {
-    execSync('git rev-parse --git-dir', {
+    const git = findGit();
+    execSync(`${git} rev-parse --git-dir`, {
       cwd: path,
       encoding: 'utf-8',
       stdio: ['pipe', 'pipe', 'pipe'],
@@ -249,9 +292,10 @@ export function isGitRepo(path: string): boolean {
  * Get the default branch of a git repository.
  */
 export function getDefaultBranch(repoPath: string): string {
+  const git = findGit();
   try {
     // Try to get the default branch from remote
-    const result = execSync('git symbolic-ref refs/remotes/origin/HEAD', {
+    const result = execSync(`${git} symbolic-ref refs/remotes/origin/HEAD`, {
       cwd: repoPath,
       encoding: 'utf-8',
       stdio: ['pipe', 'pipe', 'pipe'],
@@ -265,14 +309,14 @@ export function getDefaultBranch(repoPath: string): string {
   } catch {
     // Fallback: check if main or master exists
     try {
-      execSync('git show-ref --verify refs/heads/main', {
+      execSync(`${git} show-ref --verify refs/heads/main`, {
         cwd: repoPath,
         stdio: ['pipe', 'pipe', 'pipe'],
       });
       return 'main';
     } catch {
       try {
-        execSync('git show-ref --verify refs/heads/master', {
+        execSync(`${git} show-ref --verify refs/heads/master`, {
           cwd: repoPath,
           stdio: ['pipe', 'pipe', 'pipe'],
         });
