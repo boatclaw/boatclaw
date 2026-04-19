@@ -5,12 +5,16 @@
  * Connect your project boards to AI coding assistants.
  */
 
-import { EventEmitter } from 'events';
 import { Command } from 'commander';
 
-// Increase max listeners to prevent warnings during polling
-// (each HTTP request adds TLS socket listeners)
-EventEmitter.defaultMaxListeners = 20;
+// Suppress MaxListenersExceeded warning from TLS sockets during polling.
+// The worker makes frequent HTTPS requests (every 3s) which add error listeners
+// to shared TLS sockets. This is expected behavior, not a memory leak.
+process.setMaxListeners(0);
+process.on('warning', (warning) => {
+  if (warning.name === 'MaxListenersExceededWarning') return;
+  console.error(warning);
+});
 import { registerSetupCommand } from './cli/commands/setup.js';
 import { registerStatusCommands } from './cli/commands/status.js';
 import { registerConfigCommands } from './cli/commands/config.js';

@@ -6,7 +6,6 @@
  */
 
 import axios, { AxiosInstance, AxiosError } from 'axios';
-import https from 'https';
 import {
   BoardProvider,
   Board,
@@ -94,7 +93,6 @@ export class TrelloProvider implements BoardProvider {
         key: this.apiKey,
         token: this.apiToken,
       },
-      httpsAgent: new https.Agent({ keepAlive: true }),
     });
   }
 
