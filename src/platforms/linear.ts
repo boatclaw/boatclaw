@@ -6,7 +6,6 @@
  */
 
 import axios, { AxiosInstance, AxiosError } from 'axios';
-import https from 'https';
 import {
   BoardProvider,
   Board,
@@ -95,7 +94,6 @@ export class LinearProvider implements BoardProvider {
         'Authorization': options.apiKey,
         'Content-Type': 'application/json',
       },
-      httpsAgent: new https.Agent({ keepAlive: true }),
     });
   }
 

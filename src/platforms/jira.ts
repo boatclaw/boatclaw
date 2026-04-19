@@ -6,7 +6,6 @@
  */
 
 import axios, { AxiosInstance, AxiosError } from 'axios';
-import https from 'https';
 import {
   BoardProvider,
   Board,
@@ -129,8 +128,6 @@ export class JiraProvider implements BoardProvider {
         'Accept': 'application/json',
         'Content-Type': 'application/json',
       },
-      // Reuse HTTPS connections to avoid MaxListenersExceeded warning
-      httpsAgent: new https.Agent({ keepAlive: true }),
     });
   }
 
