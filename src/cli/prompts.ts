@@ -5,7 +5,7 @@
 import inquirer from 'inquirer';
 import chalk from 'chalk';
 import * as readline from 'readline';
-import { readdirSync, statSync, existsSync } from 'fs';
+import { readdirSync, statSync, existsSync, readFileSync } from 'fs';
 import { resolve, dirname, parse, join } from 'path';
 import { execSync } from 'child_process';
 import { homedir } from 'os';
@@ -246,39 +246,68 @@ export async function inputMultilineText(options: {
  * Detect GitHub remote from a git repository.
  */
 export function detectGitHubRepo(repoPath: string): string | null {
+  // Try to find the remote URL from multiple sources
+  let remoteUrl: string | null = null;
+
+  // Method 1: Read .git/config directly (no git CLI needed, works everywhere)
   try {
-    const git = findGit();
-    const remoteUrl = execSync(`${git} remote get-url origin`, {
-      cwd: repoPath,
-      encoding: 'utf-8',
-      stdio: ['pipe', 'pipe', 'pipe'],
-    }).trim();
-
-    // Parse GitHub URL
-    // Formats:
-    // - https://github.com/owner/repo.git
-    // - git@github.com:owner/repo.git
-    // - https://github.com/owner/repo
-
-    const match = remoteUrl.match(/github\.com[/:]([\w-]+)\/([\w.-]+?)(\.git)?$/);
-    if (match) {
-      return `${match[1]}/${match[2]}`;
+    const gitConfigPath = join(repoPath, '.git', 'config');
+    if (existsSync(gitConfigPath)) {
+      const config = readFileSync(gitConfigPath, 'utf-8');
+      // Look for [remote "origin"] section and extract url
+      const originMatch = config.match(/\[remote\s+"origin"\][^[]*url\s*=\s*(.+)/m);
+      if (originMatch) {
+        remoteUrl = originMatch[1].trim();
+      }
     }
-
-    return null;
   } catch {
-    return null;
+    // Ignore read errors
   }
+
+  // Method 2: Try git CLI as fallback
+  if (!remoteUrl) {
+    try {
+      const git = findGit();
+      remoteUrl = execSync(`${git} remote get-url origin`, {
+        cwd: repoPath,
+        encoding: 'utf-8',
+        stdio: ['pipe', 'pipe', 'pipe'],
+      }).trim();
+    } catch {
+      // Git CLI not available or not a git repo
+    }
+  }
+
+  if (!remoteUrl) return null;
+
+  // Parse GitHub URL
+  // Formats:
+  // - https://github.com/owner/repo.git
+  // - git@github.com:owner/repo.git
+  // - https://github.com/owner/repo
+  const match = remoteUrl.match(/github\.com[/:]([\w-]+)\/([\w.-]+?)(\.git)?$/);
+  if (match) {
+    return `${match[1]}/${match[2]}`;
+  }
+
+  return null;
 }
 
 /**
  * Check if a path is a git repository.
  */
-export function isGitRepo(path: string): boolean {
+export function isGitRepo(repoPath: string): boolean {
+  // Primary: check for .git directory or file (works without git CLI)
+  const gitDir = join(repoPath, '.git');
+  if (existsSync(gitDir)) {
+    return true;
+  }
+
+  // Fallback: try git CLI (handles worktrees and other edge cases)
   try {
     const git = findGit();
     execSync(`${git} rev-parse --git-dir`, {
-      cwd: path,
+      cwd: repoPath,
       encoding: 'utf-8',
       stdio: ['pipe', 'pipe', 'pipe'],
     });
