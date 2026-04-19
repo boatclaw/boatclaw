@@ -96,6 +96,12 @@ export class GitHubClient {
     this.octokit = new Octokit({
       auth: options.token,
       userAgent: 'boatclaw/1.0.0',
+      log: {
+        debug: () => {},
+        info: () => {},
+        warn: () => {},
+        error: () => {},
+      },
     });
 
     if (options.defaultRepo) {
