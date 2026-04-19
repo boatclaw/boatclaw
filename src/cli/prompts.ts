@@ -251,13 +251,31 @@ export function detectGitHubRepo(repoPath: string): string | null {
 
   // Method 1: Read .git/config directly (no git CLI needed, works everywhere)
   try {
-    const gitConfigPath = join(repoPath, '.git', 'config');
-    if (existsSync(gitConfigPath)) {
-      const config = readFileSync(gitConfigPath, 'utf-8');
+    // .git can be a directory (normal) or a file (worktree/submodule)
+    const gitPath = join(repoPath, '.git');
+    let configPath = join(gitPath, 'config');
+
+    // If .git is a file, read the real git dir from it
+    if (existsSync(gitPath) && statSync(gitPath).isFile()) {
+      const gitFileContent = readFileSync(gitPath, 'utf-8').trim();
+      // Format: "gitdir: /path/to/real/.git/worktrees/name"
+      const gitdirMatch = gitFileContent.match(/gitdir:\s*(.+)/);
+      if (gitdirMatch) {
+        // The config is in the parent of the worktree dir
+        const realGitDir = resolve(repoPath, gitdirMatch[1].trim());
+        // Go up from worktrees/name to the main .git dir
+        const mainGitDir = resolve(realGitDir, '..', '..');
+        configPath = join(mainGitDir, 'config');
+      }
+    }
+
+    if (existsSync(configPath)) {
+      const config = readFileSync(configPath, 'utf-8');
       // Look for [remote "origin"] section and extract url
-      const originMatch = config.match(/\[remote\s+"origin"\][^[]*url\s*=\s*(.+)/m);
+      // Handles both double and single quotes, and Windows \r\n line endings
+      const originMatch = config.match(/\[remote\s+["']origin["']\][^[]*?url\s*=\s*(.+)/m);
       if (originMatch) {
-        remoteUrl = originMatch[1].trim();
+        remoteUrl = originMatch[1].trim().replace(/\r$/, '');
       }
     }
   } catch {

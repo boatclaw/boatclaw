@@ -13,8 +13,8 @@ import chalk from 'chalk';
 import inquirer from 'inquirer';
 import * as readline from 'readline';
 import { configManager, ProjectConfig } from '../../core/config.js';
-import { existsSync } from 'fs';
-import { resolve, basename } from 'path';
+import { existsSync, readFileSync } from 'fs';
+import { resolve, basename, join } from 'path';
 import * as ui from '../ui.js';
 import { selectPath, detectGitHubRepo, isGitRepo, getDefaultBranch } from '../prompts.js';
 import { isInitialized } from '../../core/paths.js';
@@ -204,7 +204,17 @@ async function addProject(options: {
         github = detected;
       }
     } else {
+      const gitConfigPath = join(resolvedPath, '.git', 'config');
+      const configExists = existsSync(gitConfigPath);
       ui.dim(`  Git repo detected at ${resolvedPath} but no GitHub remote found.`);
+      ui.dim(`  .git/config exists: ${configExists}`);
+      if (configExists) {
+        try {
+          const config = readFileSync(gitConfigPath, 'utf-8');
+          const hasRemote = config.includes('[remote');
+          ui.dim(`  Has remote section: ${hasRemote}`);
+        } catch { /* ignore */ }
+      }
     }
   } else if (!github && !isRepo) {
     ui.dim(`  No .git found at ${resolvedPath}`);

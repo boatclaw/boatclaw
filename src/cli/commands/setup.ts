@@ -20,8 +20,8 @@ import { JiraProvider } from '../../platforms/jira.js';
 import { LinearProvider } from '../../platforms/linear.js';
 import * as ui from '../ui.js';
 import { selectPath, detectGitHubRepo, isGitRepo, getDefaultBranch, inputMultilineText } from '../prompts.js';
-import { existsSync, writeFileSync } from 'fs';
-import { resolve, basename } from 'path';
+import { existsSync, writeFileSync, readFileSync } from 'fs';
+import { resolve, basename, join } from 'path';
 
 export function registerSetupCommand(program: Command): void {
   program
@@ -987,6 +987,18 @@ async function setupInitialProject(): Promise<void> {
       }
     } else {
       ui.dim(`  Git repo detected at ${resolvedPath} but no GitHub remote found.`);
+      // Debug: show what we found in .git/config
+      try {
+        const configPath = join(resolvedPath, '.git', 'config');
+        if (existsSync(configPath)) {
+          const config = readFileSync(configPath, 'utf-8');
+          const hasRemote = config.includes('[remote');
+          const urlLine = config.match(/url\s*=\s*(.+)/m);
+          ui.dim(`  .git/config exists, has remote: ${hasRemote}, url: ${urlLine ? urlLine[1].trim() : 'none'}`);
+        } else {
+          ui.dim(`  .git/config not found at ${configPath}`);
+        }
+      } catch { /* ignore */ }
     }
   } else {
     ui.dim(`  No .git found at ${resolvedPath}`);
