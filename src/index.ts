@@ -5,12 +5,16 @@
  * Connect your project boards to AI coding assistants.
  */
 
-import { EventEmitter } from 'events';
 import { Command } from 'commander';
 
-// Increase max listeners to prevent warnings during polling
-// (each HTTP request adds TLS socket listeners)
-EventEmitter.defaultMaxListeners = 20;
+import { EventEmitter } from 'events';
+
+// Node.js emits MaxListenersExceededWarning during frequent HTTPS polling
+// because axios adds error listeners to shared TLS sockets per request.
+// These listeners are cleaned up after each request — not a memory leak.
+// Set global default to 0 (unlimited) to suppress for ALL emitters (including TLS sockets).
+EventEmitter.defaultMaxListeners = 0;
+process.setMaxListeners(0);
 import { registerSetupCommand } from './cli/commands/setup.js';
 import { registerStatusCommands } from './cli/commands/status.js';
 import { registerConfigCommands } from './cli/commands/config.js';
