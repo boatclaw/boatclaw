@@ -77,8 +77,8 @@ export async function selectPath(options: {
           default: parse(currentPath).root.charAt(0),
           filter: (val: string) => `${val.toUpperCase()}:\\`,
           validate: (val: string) => {
-            const drivePath = `${val.toUpperCase()}:\\`;
-            return existsSync(drivePath) || `Drive ${drivePath} not found`;
+            // val is already filtered (e.g. "C:\") — use directly
+            return existsSync(val) || `Drive ${val} not found`;
           },
         }]);
         currentPath = drive;
