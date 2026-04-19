@@ -987,6 +987,20 @@ async function setupInitialProject(): Promise<void> {
       }
     } else {
       ui.dim(`  Git repo detected at ${resolvedPath} but no GitHub remote found.`);
+      // Debug: show what we found in .git/config
+      try {
+        const { join } = await import('path');
+        const { existsSync: exists, readFileSync: readFile } = await import('fs');
+        const configPath = join(resolvedPath, '.git', 'config');
+        if (exists(configPath)) {
+          const config = readFile(configPath, 'utf-8');
+          const hasRemote = config.includes('[remote');
+          const urlLine = config.match(/url\s*=\s*(.+)/m);
+          ui.dim(`  .git/config exists, has remote: ${hasRemote}, url: ${urlLine ? urlLine[1].trim() : 'none'}`);
+        } else {
+          ui.dim(`  .git/config not found at ${configPath}`);
+        }
+      } catch { /* ignore */ }
     }
   } else {
     ui.dim(`  No .git found at ${resolvedPath}`);
