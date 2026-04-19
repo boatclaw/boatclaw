@@ -1,6 +1,6 @@
 {
   "name": "boatclaw",
-  "version": "0.5.6",
+  "version": "0.5.7",
   "description": "AI-powered task automation for development teams - Open Source",
   "type": "module",
   "main": "./dist/index.js",
