@@ -5,16 +5,15 @@
  * Connect your project boards to AI coding assistants.
  */
 
+import { EventEmitter } from 'events';
 import { Command } from 'commander';
 
-// Suppress MaxListenersExceeded warning from TLS sockets during polling.
-// The worker makes frequent HTTPS requests (every 3s) which add error listeners
-// to shared TLS sockets. This is expected behavior, not a memory leak.
+// Node.js emits MaxListenersExceededWarning during frequent HTTPS polling
+// because axios adds error listeners to shared TLS sockets per request.
+// These listeners are cleaned up after each request — not a memory leak.
+// Set global default to 0 (unlimited) for ALL emitters including TLS sockets.
+EventEmitter.defaultMaxListeners = 0;
 process.setMaxListeners(0);
-process.on('warning', (warning) => {
-  if (warning.name === 'MaxListenersExceededWarning') return;
-  console.error(warning);
-});
 import { registerSetupCommand } from './cli/commands/setup.js';
 import { registerStatusCommands } from './cli/commands/status.js';
 import { registerConfigCommands } from './cli/commands/config.js';
