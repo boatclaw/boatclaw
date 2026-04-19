@@ -6,8 +6,9 @@ import inquirer from 'inquirer';
 import chalk from 'chalk';
 import * as readline from 'readline';
 import { readdirSync, statSync, existsSync } from 'fs';
-import { resolve, dirname } from 'path';
+import { resolve, dirname, parse } from 'path';
 import { execSync } from 'child_process';
+import { homedir } from 'os';
 
 /**
  * Path selection with easy navigation.
@@ -28,9 +29,14 @@ export async function selectPath(options: {
   while (true) {
     const entries = getDirectoryEntries(currentPath, options.onlyDirectories ?? true);
 
+    const rootPath = parse(currentPath).root; // '/' on Unix, 'C:\' on Windows
+    const isAtRoot = currentPath === rootPath;
+
     const choices = [
       { name: chalk.green(`✓ Use this folder: ${currentPath}`), value: '__SELECT__' },
-      { name: chalk.dim('..  (go up)'), value: '__UP__' },
+      ...(!isAtRoot ? [{ name: chalk.dim('..  (go up)'), value: '__UP__' }] : []),
+      { name: chalk.cyan('🏠 Go to home folder'), value: '__HOME__' },
+      { name: chalk.cyan('💿 Go to drive/root'), value: '__ROOT__' },
       { name: chalk.cyan('📝 Type path manually'), value: '__MANUAL__' },
       new inquirer.Separator(),
       ...entries.map((entry) => ({
@@ -53,6 +59,32 @@ export async function selectPath(options: {
 
     if (selection === '__UP__') {
       currentPath = dirname(currentPath);
+      continue;
+    }
+
+    if (selection === '__HOME__') {
+      currentPath = homedir();
+      continue;
+    }
+
+    if (selection === '__ROOT__') {
+      if (process.platform === 'win32') {
+        // On Windows, let user type drive letter (D:\, E:\, etc.)
+        const { drive } = await inquirer.prompt([{
+          type: 'input',
+          name: 'drive',
+          message: 'Enter drive (e.g. C, D, E):',
+          default: parse(currentPath).root.charAt(0),
+          filter: (val: string) => `${val.toUpperCase()}:\\`,
+          validate: (val: string) => {
+            const drivePath = `${val.toUpperCase()}:\\`;
+            return existsSync(drivePath) || `Drive ${drivePath} not found`;
+          },
+        }]);
+        currentPath = drive;
+      } else {
+        currentPath = '/';
+      }
       continue;
     }
 
